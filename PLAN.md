@@ -273,8 +273,11 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
 - ✅ Fase 3 UX/UI — `app/` scaffolded, Design System extendido con 7
   primitivas restauranteras, prototipo MeseroScreen funcional, meta "≤3
   toques" validada por test automatizado (2026-07-03).
-- ⬜ Fase 4 Base de datos — SIGUIENTE.
-- ⬜ Fases 5–8 — ver §9.
+- ✅ Fase 4 Base de datos — 11 migraciones base copiadas de pos-inteligente +
+  5 nuevas (mesas/comandas, recetas, turnos/propinas, CFDI, triggers/vistas),
+  validadas con `node:sqlite` real simulando un servicio completo (2026-07-03).
+- ⬜ Fase 5 Infraestructura — SIGUIENTE.
+- ⬜ Fases 6–8 — ver §9.
 
 ## Bitácora
 
@@ -347,3 +350,42 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     dueño abra `http://localhost:5190` tras `npm run dev` para confirmar
     visualmente antes de considerar el prototipo cerrado del todo.
   - Docs nuevos: `docs/ux/design-system-extension.md`.
+- 2026-07-03: Fase 4 completada en modo autónomo total.
+  - **11 migraciones base copiadas TAL CUAL** de
+    `~/pos-inteligente/docs/db/migrations/` (0001–0011: tenants/locations,
+    catálogo/impuestos, inventario, ventas, caja, promociones, vectores/FTS,
+    triggers, vistas) — sin re-litigar, per ADR-1. `migrate.ts`/`db.ts`
+    copiados sin cambios (ya eran genéricos, sin nada específico de POS).
+  - **5 migraciones nuevas**: `0012_mesas_comandas` (tables, orders,
+    order_items append-only event log, modificadores), `0013_recetas`
+    (recipes/recipe_items/modifier_recipe_deltas — el inventario se descuenta
+    por receta, no por unidad vendida), `0014_turnos_propinas` (shifts, tips,
+    reparto CONFIGURABLE vía `tip_pool_configs`), `0015_cfdi` (modelo CFDI 4.0
+    completo: issuers/documents/conceptos/complemento de pago, independiente
+    del PAC), `0016_triggers_vistas_restaurante` (2 triggers mecánicos
+    mesa↔comanda + 6 vistas: `v_tables_status`, `v_kitchen_queue`,
+    `v_dish_prep_time`, `v_dish_sales_margin`, `v_tips_by_shift`,
+    `v_table_turnover`).
+  - DECISIÓN AUTÓNOMA: un platillo del menú y un insumo son AMBOS filas de
+    `products` (0003) — no se creó un catálogo paralelo. Solo se agregó lo
+    genuinamente nuevo (mesas/comandas/recetas/turnos/CFDI), reutilizando
+    FTS5/inventario/ventas sin tocarlos.
+  - DECISIÓN AUTÓNOMA: el descuento de inventario por receta NO es un
+    trigger SQL — es lógica de dominio (TX explícita), mismo criterio de
+    diseño que 0010 ya documentaba para pos-inteligente (triggers solo para
+    transformaciones puramente mecánicas).
+  - **Validado con datos reales** (`node:sqlite`, no mockeado):
+    `seedRestaurant.ts` siembra un menú con receta (tacos al pastor: 3
+    tortillas + 0.15kg carne + 0.02kg cebolla) y modificador requerido
+    (salsa). `restaurantSchema.test.ts` simula un servicio completo: abrir
+    mesa (trigger→ocupada) → comanda → bump a en_preparacion (inventario
+    descontado, verificado) → bump a listo 4 min después (verificado en
+    `v_dish_prep_time`) → cerrar comanda (trigger→por_limpiar) → venta+pago →
+    turno+propina (`v_tips_by_shift`) → margen del platillo
+    (`v_dish_sales_margin`, verificado: precio $90 − costo receta $16.74 =
+    margen $73.26). **20/20 tests verdes**, typecheck y build limpios.
+  - Docs nuevos: `docs/db/schema-overview-restaurante.md`.
+  - Pendiente para Fase 6 (no bloquea Fase 5): envolver el descuento de
+    inventario por receta en un caso de uso real con outbox
+    (`sendItemToKitchen`, mismo patrón que `checkoutSale`); ejercitar
+    `modifier_recipe_deltas` con un caso real ("sin cebolla").
