@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Card } from "@ui/components/ui";
 import { FloorPlan, ModifierPicker, type FloorTable } from "@ui/components/restaurant";
 import { formatMoney } from "@domain/money";
@@ -6,6 +6,7 @@ import { createDraftOrder, orderTotalCents, type DraftOrder } from "@domain/orde
 import type { MenuItem } from "@domain/menu";
 import { categoriasSeed, menuSeed } from "@infra/memory/seedMenu";
 import { addItemByTapping } from "@ui/flows/comandaFlow";
+import { HubClient } from "@infra/hub/hubClient";
 
 const mesasSeed: FloorTable[] = [
   { id: "t1", numero: 1, estado: "libre", capacidad: 4 },
@@ -18,11 +19,29 @@ const mesasSeed: FloorTable[] = [
 type Vista = { paso: "mesas" } | { paso: "categorias" } | { paso: "platillos"; categoriaId: string } | { paso: "modificadores"; item: MenuItem };
 
 /** Pantalla del mesero: FloorPlan → categoría → platillo → (modificadores) → comanda. Flujo 1 de docs/ux/flujos-casos-uso.md. */
-export function MeseroScreen() {
+export function MeseroScreen({ hubUrl = "ws://localhost:5190/ws" }: { hubUrl?: string }) {
   const [mesa, setMesa] = useState<FloorTable | null>(null);
   const [order, setOrder] = useState<DraftOrder | null>(null);
   const [vista, setVista] = useState<Vista>({ paso: "mesas" });
   const [ultimoConteo, setUltimoConteo] = useState<number | null>(null);
+  const [enviado, setEnviado] = useState(false);
+  const [conectado, setConectado] = useState(false);
+  const hubRef = useRef<HubClient | null>(null);
+
+  useEffect(() => {
+    const client = new HubClient({ url: `${hubUrl}?role=mesero&device=tablet-1`, onHello: () => setConectado(true), onEvent: () => {} });
+    hubRef.current = client;
+    return () => client.close();
+  }, [hubUrl]);
+
+  function enviarAcocina() {
+    if (!order || order.items.length === 0) return;
+    hubRef.current?.sendCommand("nueva_comanda", {
+      mesa: order.mesa,
+      items: order.items.map((it) => ({ producto: it.nombre, cantidad: it.cantidad })),
+    });
+    setEnviado(true);
+  }
 
   function seleccionarMesa(t: FloorTable) {
     setMesa(t);
@@ -35,6 +54,7 @@ export function MeseroScreen() {
     const { order: next, taps } = addItemByTapping(order, item, chosen);
     setOrder(next);
     setUltimoConteo(taps);
+    setEnviado(false);
     setVista({ paso: "categorias" });
   }
 
@@ -112,7 +132,12 @@ export function MeseroScreen() {
           {!order?.items.length && <li className="text-slate-400">Sin platillos aún</li>}
         </ul>
         {order && (
-          <p className="text-right font-bold text-slate-800">Total: {formatMoney(orderTotalCents(order))}</p>
+          <p className="mb-3 text-right font-bold text-slate-800">Total: {formatMoney(orderTotalCents(order))}</p>
+        )}
+        {order && order.items.length > 0 && (
+          <Button fullWidth onClick={enviarAcocina} disabled={!conectado} variant={enviado ? "secondary" : "primary"}>
+            {enviado ? "Enviado a cocina ✓" : conectado ? "Enviar a cocina" : "Conectando al hub…"}
+          </Button>
         )}
       </Card>
     </div>
