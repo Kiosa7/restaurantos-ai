@@ -266,10 +266,52 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
 ## 13. Estado por componente
 
 - ✅ Fase 1 Discovery — este documento (2026-07-03).
-- ⬜ Fase 2 Arquitectura — spikes 1–4 + docs/.
+- ✅ Fase 2 Arquitectura — spikes 1–4 + docs/ formales completos (2026-07-03).
+  Spike 1 (multi-terminal) y 4 (benchmark Ollama) 100% verdes. Spikes 2
+  (ESC/POS) y 3 (CFDI) verdes en software/contrato, ⛔ bloqueados en hardware
+  real / cuenta sandbox (ver docs/spikes/).
 - ⬜ Fases 3–8 — ver §9.
 
 ## Bitácora
 
 - 2026-07-03: Fase 1 Discovery completada y validada. Decisiones ADR-1..6
   congeladas. Repo creado con este plan maestro como handoff.
+- 2026-07-03: Fase 2 completada en modo autónomo total.
+  - **Spike 1 (multi-terminal)** ✅: hub HTTP+WS prototipo en Node
+    (`spikes/multiterminal/`), protocolo comando→ack→evento con dedup por
+    UUID, replay tras reconexión y reloj autoritativo del hub — las 4
+    propiedades de riesgo validadas con test automatizado.
+    DECISIÓN AUTÓNOMA: el runtime de producción del hub será Rust/axum
+    embebido en el proceso Tauri (no un sidecar Node), por simplicidad de
+    empaquetado en 1 solo exe; el prototipo Node queda como referencia
+    ejecutable del protocolo, portable a la implementación Rust de Fase 5.
+  - **Spike 2 (ESC/POS)** 🟡: encoder ESC/POS + plantillas de comanda/cuenta +
+    simulador de impresora (`spikes/escpos/`), todas las propiedades de
+    software validadas por test (corte, apertura de cajón solo en efectivo,
+    formato). ⛔ BLOQUEADO: no hay impresora térmica 80mm física en esta
+    máquina para validar compatibilidad de firmware real (ancho de columna,
+    soporte de corte parcial, tabla de caracteres) — sigue pendiente
+    conseguirla (PLAN.md §11.3).
+  - **Spike 3 (CFDI)** 🟡: investigación de Facturama vs SW Sapien (auth,
+    endpoints, precios) + clientes `PacClient` con contrato validado por
+    mocks (`spikes/cfdi/`). DECISIÓN AUTÓNOMA: SW Sapien como PAC primario
+    (sandbox "igual a producción", payload más apegado al CFDI oficial),
+    Facturama como fallback documentado — la interfaz `PacClient` hace este
+    cambio barato si hiciera falta. ⛔ BLOQUEADO: no hay cuenta/credenciales
+    sandbox reales de ningún PAC (crear cuenta es gratuito pero requiere
+    acción del dueño); no se pudo timbrar un CFDI de prueba real.
+  - **Spike 4 (benchmark Ollama)** ✅: medido en esta PC (Ryzen 5 8645HS,
+    24GB RAM, CPU-only) — `qwen2.5:3b` 50.4 tok/s, `qwen2.5:7b` 22.1 tok/s,
+    `llava:7b` ~51s pared a pared por imagen (18s carga fría + inferencia).
+    Se pulieron `qwen2.5:3b` y `nomic-embed-text` (faltaban, PLAN.md §12 lo
+    marcaba pendiente). Tiers del ADR-2 confirmados sin cambios; nota: esta
+    PC es más potente que el piso del ADR-2, falta medir en hardware de 8GB
+    real (⛔ no disponible).
+  - **Docs formales** ✅: `docs/vision-producto.md`,
+    `docs/arquitectura-tecnica.md` (general/software/datos/sync/IA/
+    seguridad), `docs/modelo-dominio.md`, `docs/permisos-plugins.md`,
+    `docs/ux/flujos-casos-uso.md`, `docs/riesgos-backlog.md`,
+    `docs/estrategia-pruebas-despliegue-mantenimiento.md`.
+  - ⛔ Pendientes que solo el dueño puede resolver (no bloquean el avance a
+    Fase 3): impresora térmica 80mm real, cuenta sandbox de un PAC (SW Sapien
+    recomendado), restaurante piloto, confirmar hub = PC de caja vs mini-PC.
