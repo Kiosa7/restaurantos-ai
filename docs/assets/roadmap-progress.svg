@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 300" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="980" height="300" fill="#f8fafc" rx="16"/>
+  <text x="490" y="40" font-size="19" font-weight="700" fill="#0f172a" text-anchor="middle">Roadmap RestaurantOS AI — estado real (2026-07-03)</text>
+
+  <!-- base line -->
+  <line x1="90" y1="120" x2="890" y2="120" stroke="#cbd5e1" stroke-width="4"/>
+  <!-- progreso resuelto: fases 1-4 completas + mitad de la 5 -->
+  <line x1="90" y1="120" x2="547" y2="120" stroke="#0d9488" stroke-width="4"/>
+
+  <!-- Fase 1 -->
+  <circle cx="90" cy="120" r="27" fill="#0d9488"/>
+  <text x="90" y="127" font-size="16" font-weight="700" fill="#ffffff" text-anchor="middle">1</text>
+  <text x="90" y="168" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">Discovery</text>
+  <text x="90" y="186" font-size="12" fill="#0d9488" text-anchor="middle">✓ completo</text>
+
+  <!-- Fase 2 -->
+  <circle cx="204" cy="120" r="27" fill="#0d9488"/>
+  <text x="204" y="127" font-size="16" font-weight="700" fill="#ffffff" text-anchor="middle">2</text>
+  <text x="204" y="168" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">Arquitectura</text>
+  <text x="204" y="186" font-size="12" fill="#0d9488" text-anchor="middle">✓ 4 spikes</text>
+
+  <!-- Fase 3 -->
+  <circle cx="318" cy="120" r="27" fill="#0d9488"/>
+  <text x="318" y="127" font-size="16" font-weight="700" fill="#ffffff" text-anchor="middle">3</text>
+  <text x="318" y="168" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">UX / UI</text>
+  <text x="318" y="186" font-size="12" fill="#0d9488" text-anchor="middle">✓ completo</text>
+
+  <!-- Fase 4 -->
+  <circle cx="432" cy="120" r="27" fill="#0d9488"/>
+  <text x="432" y="127" font-size="16" font-weight="700" fill="#ffffff" text-anchor="middle">4</text>
+  <text x="432" y="168" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">Base de datos</text>
+  <text x="432" y="186" font-size="12" fill="#0d9488" text-anchor="middle">✓ completo</text>
+
+  <!-- Fase 5 -->
+  <circle cx="546" cy="120" r="27" fill="#d97706"/>
+  <text x="546" y="127" font-size="16" font-weight="700" fill="#ffffff" text-anchor="middle">5</text>
+  <text x="546" y="168" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">Infraestructura</text>
+  <text x="546" y="186" font-size="12" fill="#b45309" text-anchor="middle">◐ parcial</text>
+
+  <!-- Fase 6 -->
+  <circle cx="660" cy="120" r="27" fill="#d97706"/>
+  <text x="660" y="127" font-size="16" font-weight="700" fill="#ffffff" text-anchor="middle">6</text>
+  <text x="660" y="168" font-size="13" font-weight="700" fill="#0f172a" text-anchor="middle">MVP</text>
+  <text x="660" y="186" font-size="12" fill="#b45309" text-anchor="middle">◐ arrancado</text>
+
+  <!-- Fase 7 -->
+  <circle cx="774" cy="120" r="27" fill="#cbd5e1"/>
+  <text x="774" y="127" font-size="16" font-weight="700" fill="#475569" text-anchor="middle">7</text>
+  <text x="774" y="168" font-size="13" font-weight="700" fill="#64748b" text-anchor="middle">Comercial</text>
+  <text x="774" y="186" font-size="12" fill="#94a3b8" text-anchor="middle">○ pendiente</text>
+
+  <!-- Fase 8 -->
+  <circle cx="888" cy="120" r="27" fill="#cbd5e1"/>
+  <text x="888" y="127" font-size="16" font-weight="700" fill="#475569" text-anchor="middle">8</text>
+  <text x="888" y="168" font-size="13" font-weight="700" fill="#64748b" text-anchor="middle">Enterprise</text>
+  <text x="888" y="186" font-size="12" fill="#94a3b8" text-anchor="middle">○ pendiente</text>
+
+  <!-- Leyenda -->
+  <g font-size="12.5" fill="#334155">
+    <rect x="300" y="230" width="16" height="16" rx="4" fill="#0d9488"/>
+    <text x="322" y="243">Completo y validado</text>
+    <rect x="480" y="230" width="16" height="16" rx="4" fill="#d97706"/>
+    <text x="502" y="243">Parcial — hay bloqueos ⛔ documentados</text>
+    <rect x="740" y="230" width="16" height="16" rx="4" fill="#cbd5e1"/>
+    <text x="762" y="243">Sin empezar</text>
+  </g>
+  <text x="490" y="275" font-size="12" fill="#94a3b8" text-anchor="middle">Detalle completo, decisiones autónomas y bloqueos en PLAN.md</text>
+</svg>

@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 700" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrowMuted" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="960" height="700" fill="#f8fafc" rx="16"/>
+
+  <!-- Restaurante boundary -->
+  <rect x="24" y="24" width="912" height="470" rx="18" fill="#ffffff" stroke="#0f766e" stroke-width="2.5" stroke-dasharray="2 0"/>
+  <text x="48" y="56" font-size="20" font-weight="700" fill="#0f766e">RESTAURANTE — opera 100% sin Internet</text>
+
+  <!-- Hub box -->
+  <rect x="52" y="80" width="400" height="380" rx="14" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+  <text x="72" y="112" font-size="18" font-weight="700" fill="#0f172a">HUB (PC de caja, sin GPU)</text>
+  <g font-size="14.5" fill="#334155">
+    <text x="72" y="150">▸ Tauri shell + UI de caja (Rust)</text>
+    <text x="72" y="180">▸ SQLite WAL/STRICT — única fuente</text>
+    <text x="92" y="200">  de verdad del local</text>
+    <text x="72" y="232">▸ Servidor axum: HTTP + WebSocket</text>
+    <text x="92" y="252">  (LAN, protocolo validado en spike 1)</text>
+    <text x="72" y="284">▸ Ollama local: qwen2.5 (chat) +</text>
+    <text x="92" y="304">  llava (visión) — SIEMPRE async</text>
+    <text x="72" y="336">▸ Impresión ESC/POS: comanda</text>
+    <text x="92" y="356">  (cocina) + cuenta (caja) + cajón</text>
+    <text x="72" y="388">▸ Outbox transaccional (sync nube)</text>
+  </g>
+  <rect x="72" y="410" width="360" height="34" rx="8" fill="#0d9488"/>
+  <text x="252" y="432" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Escritor único — sin conflictos intra-local</text>
+
+  <!-- Terminales box -->
+  <rect x="508" y="80" width="400" height="380" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="528" y="112" font-size="18" font-weight="700" fill="#0f172a">TERMINALES LAN (PWA)</text>
+  <g font-size="14.5" fill="#334155">
+    <text x="528" y="150">▸ Tablet de mesero</text>
+    <text x="548" y="170">  comanda ≤ 3 toques por platillo</text>
+    <text x="528" y="204">▸ Pantalla de cocina (KDS)</text>
+    <text x="548" y="224">  tarjetas grandes, color por urgencia,</text>
+    <text x="548" y="244">  reloj SIEMPRE del hub</text>
+    <text x="528" y="278">▸ Caja(s) adicional(es)</text>
+    <text x="548" y="298">  mismo hub, otra pantalla</text>
+  </g>
+  <rect x="528" y="330" width="360" height="34" rx="8" fill="#2563eb"/>
+  <text x="708" y="352" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle">Sin instalar — Chrome/WebView + pairing QR/PIN</text>
+  <g font-size="13" fill="#64748b">
+    <text x="528" y="390">No requieren SQLite propio: escriben</text>
+    <text x="528" y="408">comandos, el hub decide y persiste.</text>
+  </g>
+
+  <!-- Bidirectional arrow hub <-> terminales -->
+  <line x1="452" y1="270" x2="508" y2="270" stroke="#334155" stroke-width="2.5" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+  <text x="480" y="256" font-size="12.5" font-weight="600" fill="#334155" text-anchor="middle">WS</text>
+
+  <!-- Nube box -->
+  <rect x="220" y="560" width="520" height="120" rx="14" fill="#fafaf9" stroke="#78716c" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="480" y="590" font-size="18" font-weight="700" fill="#44403c" text-anchor="middle">NUBE — asistencia, NO dependencia</text>
+  <text x="480" y="618" font-size="13.5" fill="#57534e" text-anchor="middle">Respaldo · Licencias · Multi-sucursal · Reportes remotos</text>
+  <text x="480" y="638" font-size="13.5" fill="#57534e" text-anchor="middle">Timbrado CFDI: el hub llama DIRECTO al PAC (cola offline)</text>
+
+  <!-- Dashed arrow hub -> nube -->
+  <line x1="252" y1="460" x2="252" y2="560" stroke="#64748b" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrowMuted)"/>
+  <text x="264" y="515" font-size="12.5" fill="#64748b">sync HLC/outbox —</text>
+  <text x="264" y="530" font-size="12.5" fill="#64748b">solo con Internet</text>
+</svg>
