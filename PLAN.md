@@ -203,13 +203,13 @@ marketplace · Auditoría avanzada · Franquicias · API pública · Visión ava
 | Fase | Alcance | Criterio de éxito |
 |---|---|---|
 | **1 Discovery** ✅ | Este documento | Dirección validada (2026-07-03) |
-| **2 Arquitectura** ⬅️ SIGUIENTE | Docs formales (`docs/`) + **4 spikes de riesgo** (ver §10) | Spikes verdes, ADRs firmados |
-| **3 UX/UI** | Flujos mesero/cocina/caja, wireframes, extensión Design System | Comanda ≤ 3 toques validada en prototipo |
-| **4 Base de datos** | Migraciones nuevas sobre el patrón de las 11 existentes: menú/modificadores, mesas, comandas/tiempos, recetas/insumos, turnos/propinas, tablas CFDI | Esquema validado con datos (mismo método que pos-inteligente: node:sqlite + triggers probados) |
-| **5 Infraestructura** | Hub server (HTTP+WS), pairing de dispositivos, servido de PWA, updater, empaquetado | Instalación limpia en PC virgen < 30 min |
-| **6 MVP** | Módulos §7 | **Un restaurante piloto opera un servicio de viernes completo sin tocar papel** |
-| **7 Comercial** | CFDI, delivery, reservas, promos, compras | Primer cliente de pago facturando |
-| **8 Enterprise** | Multi-sucursal, plugins, API pública | Cadena 3+ sucursales sincronizando |
+| **2 Arquitectura** ✅ | Docs formales (`docs/`) + **4 spikes de riesgo** | Spikes verdes (2/4 con hardware/cuenta ⛔ pendiente, ver bitácora) |
+| **3 UX/UI** ✅ | Flujos mesero/cocina/caja, wireframes, extensión Design System | Comanda ≤ 3 toques validada por test automatizado |
+| **4 Base de datos** ✅ | Migraciones nuevas: menú/modificadores, mesas, comandas/tiempos, recetas/insumos, turnos/propinas, tablas CFDI | Esquema validado con datos reales (node:sqlite, servicio completo simulado) |
+| **5 Infraestructura** 🟡 | Hub server (HTTP+WS) ✅, pairing MVP ✅, servido de PWA ✅ — updater y empaquetado ⛔ | "Instalación limpia en PC virgen < 30 min" SIN validar (falta `tauri build`) |
+| **6 MVP** 🟡 ⬅️ SIGUIENTE | Módulos §7 — arrancado: mesero↔hub↔KDS end-to-end real. Falta: caja/cortes, menú-recetas en pantalla, turnos/propinas en UI, impresión real, RBAC/PIN, backup, asistente IA v1 conectado | **Un restaurante piloto opera un servicio de viernes completo sin tocar papel** — lejos aún |
+| **7 Comercial** ⬜ | CFDI, delivery, reservas, promos, compras | Primer cliente de pago facturando |
+| **8 Enterprise** ⬜ | Multi-sucursal, plugins, API pública | Cadena 3+ sucursales sincronizando |
 
 Entregables documentales de la Fase 2 (crear en `docs/`): visión de producto ·
 arquitectura general/software/datos/sync/IA/seguridad · modelo de dominio · modelo
@@ -218,25 +218,55 @@ matriz de riesgos completa · backlog priorizado · estrategia de pruebas ·
 estrategia de despliegue · estrategia de mantenimiento. Formato: el mismo que
 `~/pos-inteligente/docs/` (documentos validables + este PLAN.md vivo).
 
-## 10. PRÓXIMO PASO CONCRETO — Fase 2: 4 spikes + docs
+## 10. PRÓXIMO PASO CONCRETO — completar Fase 6 (MVP)
 
-Ejecutar en este orden (cada spike termina con un mini-informe en `docs/spikes/`):
+Fases 1–5 completas (5 con 2 pendientes ⛔ no bloqueantes, ver bitácora
+2026-07-03). Fase 6 arrancó con la porción más riesgosa ya resuelta: mesero
+→ hub (Rust real) → KDS funcionando en vivo (`app/src/ui/screens/
+MeseroScreen.tsx` + `CocinaScreen.tsx` + `app/src/infra/hub/hubClient.ts`),
+verificado contra el binario compilado (`cargo run`), no solo contra tests.
 
-1. **Spike multi-terminal:** prototipo hub (HTTP + WebSocket sirviendo una PWA
-   mínima) con 2 clientes en LAN: un "mesero" manda un comando idempotente y un
-   "KDS" lo ve en < 1 s. Validar: reconexión, deduplicación por UUID, reloj del hub.
-   Decisión a tomar aquí: servidor en el proceso Rust de Tauri (axum) vs sidecar
-   Node — elegir con el spike, criterio = simplicidad de despliegue en 1 solo exe.
-2. **Spike impresión ESC/POS:** imprimir comanda y cuenta en térmica 80 mm real
-   (USB y/o Ethernet) + drawer kick. ⚠️ Requiere hardware — si no hay impresora
-   aún, PEDIRLA al dueño antes de empezar la fase.
-3. **Spike CFDI sandbox:** timbrar una factura de prueba contra el sandbox de
-   Facturama o SW Sapien desde Node. Documentar costos por timbre y flujo de
-   cancelación.
-4. **Benchmark Ollama CPU:** medir tokens/s de `qwen2.5:3b` y `qwen2.5:7b` y
-   latencia de `llava:7b` en la PC objetivo; fijar los umbrales de los tiers.
+**Lo que falta para cerrar Fase 6** (orden sugerido, cada uno independiente
+salvo donde se anota dependencia):
 
-En paralelo/después: redactar los documentos de `docs/` (§9).
+1. **Persistir el hub en SQLite** (hoy `event_log`/`seen_command_ids` viven
+   en memoria del proceso Rust — se pierden al reiniciar). Usar las tablas
+   `orders`/`order_items`/`order_item_events` de 0012 como destino real de
+   los comandos `nueva_comanda`/`bump_platillo`, con outbox transaccional
+   igual que `pos-inteligente/docs/sync/protocolo.md`. **Bloquea** que Caja
+   pueda leer comandas reales para cobrar.
+2. **Pantalla de Caja** (hub Tauri, no PWA): plano de mesas (`FloorPlan` ya
+   existe) → ver comanda abierta → `SplitBillSheet`/`TipSelector`/`NumPad`
+   (ya existen como componentes, faltan integrarlos) → cobrar → genera venta
+   real sobre 0006 + `order_sales`. Depende de (1).
+3. **Descuento de inventario por receta real**: hoy solo se probó a mano en
+   `restaurantSchema.test.ts`. Envolver en un caso de uso
+   `sendItemToKitchen` (dominio) que el hub dispare al procesar
+   `bump_platillo` hacia `en_preparacion`.
+4. **Impresión real**: cablear `spikes/escpos/{encoder,tickets}.mjs` (portar
+   a TS dentro de `app/src/infra/`) con el transporte WebUSB/Serial ya
+   existente en pos-inteligente (`thermalPrinter.ts`, aún no copiado a este
+   repo). Sigue ⛔ la validación con impresora física (spike 2).
+5. **Turnos y propinas en UI**: `TipSelector` existe; falta pantalla de
+   apertura/cierre de turno y el cálculo de reparto configurable (0014) con
+   datos reales en vez del test manual.
+6. **RBAC/PIN**: copiar el módulo de pos-inteligente (`PinModal.tsx` que se
+   quitó del scaffold inicial por no usarse aún, más la lógica de
+   `employees`/`roles` ya en 0002) y aplicar permisos por pantalla/dispositivo
+   (docs/permisos-plugins.md).
+7. **Backup cifrado**: copiar el módulo de pos-inteligente tal cual (ADR-1).
+8. **Asistente IA v1**: conectar `OllamaAIClient` de pos-inteligente contra
+   las vistas nuevas de 0016 (`v_dish_sales_margin`, `v_tips_by_shift`, etc.)
+   con las tools que faltan por catalogar en un
+   `docs/ai/tools-conversacional-restaurante.md` (no existe aún).
+9. **Pairing real de dispositivos** (hoy `/pair` es un placeholder, ver
+   spike-5): QR/PIN generado en el hub, `deviceId` persistente, rol
+   asociado.
+
+**Criterio de éxito de Fase 6 no depende solo de código**: necesita el
+restaurante piloto (⛔ §11.4) para el "sin tocar papel" real; mientras tanto,
+validar cada módulo con el seed demo (`seedRestaurant.ts`) es suficiente para
+marcarlo ✅ técnicamente.
 
 ## 11. Supuestos pendientes de confirmar con el dueño
 
@@ -280,8 +310,12 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   validado (protocolo + PWA estática, 2/2 tests). Pairing MVP. ⛔ empaquetado
   real (MSI/NSIS), updater y resource bundling de la PWA en producción
   pendientes (2026-07-03) — ver docs/spikes/spike-5-hub-rust.md.
-- ⬜ Fase 6 MVP — SIGUIENTE.
-- ⬜ Fases 7–8 — ver §9.
+- 🟡 Fase 6 MVP — ARRANCADA: mesero↔hub Rust↔KDS funcionando end-to-end real
+  (verificado contra el binario compilado, no solo tests). Falta el resto de
+  §7 (caja/cortes, impresión real, RBAC, backup, IA, turnos/propinas en UI,
+  persistencia del hub) — ver §10 para el desglose y orden sugerido
+  (2026-07-03).
+- ⬜ Fases 7–8 — sin empezar, ver §9.
 
 ## Bitácora
 
@@ -422,3 +456,42 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     criterio de éxito de Fase 5 aún sin cerrar ("instalación limpia en PC
     virgen < 30 min").
   - Docs nuevos: `docs/spikes/spike-5-hub-rust.md`.
+- 2026-07-03: Fase 6 arrancada (modo autónomo total) y CIERRE DE SESIÓN.
+  - **`app/src/infra/hub/hubClient.ts`**: cliente TS del protocolo del hub
+    para el navegador — cola idempotente por UUID, reconexión con backoff
+    fijo (1s) y replay automático vía `since_index`.
+  - **`MeseroScreen`** ahora manda un comando `nueva_comanda` real al hub al
+    tocar "Enviar a cocina" (antes solo mutaba estado local). **`CocinaScreen`**
+    (KDS) es nueva: se conecta como rol `kds`, renderiza con `OrderTicket` lo
+    que llega en vivo. `App.tsx` rutea por `?role=kds|mesero`.
+  - **Verificado de punta a punta contra el binario REAL, no solo tests**:
+    `cargo run` levantó el hub en el puerto 5190 (tras liberar un proceso
+    `vite` zombie que quedó de una sesión anterior de este mismo trabajo —
+    ver nota abajo), `curl /health` respondió, `curl /` sirvió la PWA real,
+    y un cliente `ws` de Node conectado como mesero+kds contra ESE proceso
+    (no un test aislado) confirmó hello→cmd→ack→evento tal cual el diseño.
+    Proceso detenido limpiamente al terminar.
+  - **Nota operativa para la siguiente sesión**: si `curl localhost:5190`
+    responde con la PWA de Vite en vez del hub Rust (o viceversa), revisar
+    `netstat -ano | grep 5190` — pueden quedar procesos `node`/`app.exe`
+    huérfanos de sesiones de desarrollo anteriores ocupando el puerto en
+    IPv4 vs IPv6 por separado; no asumir que "responde" = "es el proceso que
+    yo arranqué".
+  - typecheck limpio, **20/20 tests** (sin cambios de conteo: la integración
+    con hubClient no se cubrió con test unitario propio porque requiere
+    `WebSocket` de navegador — la corrección del protocolo ya está probada
+    por partida doble en `spikes/multiterminal/test.mjs` y
+    `src-tauri/tests/hub_test.rs`; lo nuevo aquí es el cableado, verificado
+    manualmente end-to-end como se describe arriba), build limpio.
+  - **Todo lo que falta de Fase 6 en adelante queda desglosado en §10** —
+    persistencia del hub en SQLite es el siguiente paso de mayor apalancamiento
+    (desbloquea Caja). Fases 7 y 8 no se empezaron: son build-out de módulos
+    de negocio (CFDI real, delivery, reservas, multi-sucursal, plugins) sobre
+    una base arquitectónica ya validada en Fases 2–5, no decisiones de diseño
+    pendientes.
+  - ⛔ Bloqueos que solo el dueño puede resolver, sin cambio desde Fase 2:
+    impresora térmica 80mm física, cuenta sandbox de un PAC (SW Sapien
+    recomendado), restaurante piloto, confirmar hub = PC de caja vs mini-PC,
+    y ahora también: confirmar si vale la pena invertir tiempo en
+    `tauri build` (WiX/NSIS) antes de tener más módulos de negocio listos,
+    o si conviene seguir iterando en `cargo build`/`npm run dev` un poco más.
