@@ -276,8 +276,12 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
 - ✅ Fase 4 Base de datos — 11 migraciones base copiadas de pos-inteligente +
   5 nuevas (mesas/comandas, recetas, turnos/propinas, CFDI, triggers/vistas),
   validadas con `node:sqlite` real simulando un servicio completo (2026-07-03).
-- ⬜ Fase 5 Infraestructura — SIGUIENTE.
-- ⬜ Fases 6–8 — ver §9.
+- 🟡 Fase 5 Infraestructura — hub Rust/axum embebido en Tauri COMPLETO y
+  validado (protocolo + PWA estática, 2/2 tests). Pairing MVP. ⛔ empaquetado
+  real (MSI/NSIS), updater y resource bundling de la PWA en producción
+  pendientes (2026-07-03) — ver docs/spikes/spike-5-hub-rust.md.
+- ⬜ Fase 6 MVP — SIGUIENTE.
+- ⬜ Fases 7–8 — ver §9.
 
 ## Bitácora
 
@@ -389,3 +393,32 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     inventario por receta en un caso de uso real con outbox
     (`sendItemToKitchen`, mismo patrón que `checkoutSale`); ejercitar
     `modifier_recipe_deltas` con un caso real ("sin cebolla").
+- 2026-07-03: Fase 5 (parcial) completada en modo autónomo total.
+  - **`app/src-tauri/` scaffolded** copiando el shell Tauri de pos-inteligente
+    (ya compilaba ahí, Rust 1.96 confirmado instalado) y adaptando
+    identifier/productName/puerto a RestaurantOS AI (5190).
+  - **Hub portado a Rust/axum** (`src/hub.rs`), cumpliendo lo que el spike 1
+    prometía: el mismo protocolo (hello/cmd/ack/event, dedup UUID, replay,
+    reloj autoritativo) reimplementado y RE-VALIDADO en Rust con un test que
+    replica exactamente `spikes/multiterminal/test.mjs`
+    (`src-tauri/tests/hub_test.rs`, `cargo test`, 2/2 verdes).
+  - **2 bugs reales encontrados y corregidos durante el port** (documentados
+    en `docs/spikes/spike-5-hub-rust.md`): (1) serde serializaba a
+    snake_case en vez de camelCase — rompía el contrato con clientes TS;
+    (2) el filtro de difusión en vivo y el de replay se habían colapsado en
+    una sola función cuando el protocolo original (spike 1) usa dos reglas
+    distintas (`live_routes_to_role` solo kds/caja, `replay_routes_to_role`
+    más permisivo). Se separaron para reproducir la asimetría exacta ya
+    validada, no una aproximación.
+  - **PWA estática servida por el hub**: probado contra el build real de
+    `app/dist` (GET `/` devuelve el index.html real).
+  - **`/pair` MVP**: entrega un token de dispositivo; política real de
+    autenticación queda para Fase 6 (ver spike-5).
+  - DECISIÓN AUTÓNOMA: no se intentó `npm run tauri build` (empaquetado
+    MSI/NSIS) ni configuración de auto-updater en esta sesión — son pasos de
+    alto riesgo/tiempo (toolchain de bundling no confirmado, llaves de firma
+    inexistentes) que no bloquean seguir construyendo el MVP de Fase 6 sobre
+    `cargo build`/`npm run dev`. Quedan ⛔ documentados en spike-5 como
+    criterio de éxito de Fase 5 aún sin cerrar ("instalación limpia en PC
+    virgen < 30 min").
+  - Docs nuevos: `docs/spikes/spike-5-hub-rust.md`.
