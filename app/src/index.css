@@ -1,0 +1,88 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* ── Design tokens ─────────────────────────────────────────────────────────
+   Fuente de verdad del sistema de diseño. Colores en OKLCH para consistencia
+   perceptual. Las primitivas de src/ui/components/ui/ consumen estos tokens;
+   evita colores sueltos y garantiza el mismo lenguaje visual en toda la app. */
+@theme {
+  /* Marca */
+  --color-brand:       oklch(55% 0.18 195);   /* teal-600 perceptual */
+  --color-brand-hover: oklch(48% 0.18 195);   /* teal-700 perceptual */
+  --color-brand-soft:  oklch(95% 0.06 195);   /* teal-50 perceptual  */
+
+  /* Estados semánticos (par color + fondo suave) */
+  --color-success:      oklch(60% 0.15 155);
+  --color-success-soft: oklch(96% 0.04 155);
+  --color-warning:      oklch(70% 0.15 75);
+  --color-warning-soft: oklch(96% 0.05 85);
+  --color-danger:       oklch(58% 0.20 25);
+  --color-danger-soft:  oklch(96% 0.04 25);
+  --color-info:         oklch(58% 0.16 250);
+  --color-info-soft:    oklch(96% 0.04 250);
+
+  /* Radios estandarizados */
+  --radius-card:  0.75rem;   /* 12px — tarjetas y contenedores */
+  --radius-field: 0.625rem;  /* 10px — inputs y botones        */
+
+  /* Altura mínima de target táctil (accesibilidad / touch-first) */
+  --spacing-touch: 2.75rem;  /* 44px */
+}
+
+/* ── Foco visible global (accesibilidad / navegación por teclado) ──────────
+   Anillo consistente en cualquier elemento interactivo enfocado por teclado.
+   Las primitivas pueden sobreescribirlo con su propio focus-visible. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: "InterVariable", "Inter", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Animations ────────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes vt-fade-out {
+  to { opacity: 0; transform: translateY(-3px); }
+}
+
+@keyframes vt-fade-in {
+  from { opacity: 0; transform: translateY(3px); }
+}
+
+/* Entrada de modales del Design System */
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+
+/* Respeta la preferencia de movimiento reducido (accesibilidad) */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* View Transitions entre pestañas */
+::view-transition-old(root) {
+  animation: 130ms ease both vt-fade-out;
+}
+::view-transition-new(root) {
+  animation: 130ms ease both vt-fade-in;
+}

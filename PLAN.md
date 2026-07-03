@@ -270,7 +270,11 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   Spike 1 (multi-terminal) y 4 (benchmark Ollama) 100% verdes. Spikes 2
   (ESC/POS) y 3 (CFDI) verdes en software/contrato, ⛔ bloqueados en hardware
   real / cuenta sandbox (ver docs/spikes/).
-- ⬜ Fases 3–8 — ver §9.
+- ✅ Fase 3 UX/UI — `app/` scaffolded, Design System extendido con 7
+  primitivas restauranteras, prototipo MeseroScreen funcional, meta "≤3
+  toques" validada por test automatizado (2026-07-03).
+- ⬜ Fase 4 Base de datos — SIGUIENTE.
+- ⬜ Fases 5–8 — ver §9.
 
 ## Bitácora
 
@@ -315,3 +319,31 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   - ⛔ Pendientes que solo el dueño puede resolver (no bloquean el avance a
     Fase 3): impresora térmica 80mm real, cuenta sandbox de un PAC (SW Sapien
     recomendado), restaurante piloto, confirmar hub = PC de caja vs mini-PC.
+- 2026-07-03: Fase 3 completada en modo autónomo total.
+  - **Scaffold de `app/`**: copiado y adaptado de `pos-inteligente/app`
+    (vite+react+ts+tailwind v4, puerto 5190, alias `@domain/@app/@infra/@ui`,
+    Design System `ui/components/ui/` heredado tal cual, dominio puro
+    `money.ts`/`ids.ts` heredado). `package.json` deliberadamente SIN
+    `@testing-library`/`jsdom` — se siguió el patrón real de pos-inteligente
+    de probar componentes con `renderToString` (SSR), no el que la memoria
+    vieja de la sesión anterior sugería.
+  - **Dominio nuevo**: `domain/menu.ts` (MenuItem/ModifierGroup/Categoria) y
+    `domain/order.ts` (DraftOrder/OrderItem, `addItemToOrder` puro e
+    inmutable, cálculo de totales) — base conceptual que Fase 4 traduce a
+    migraciones SQLite reales.
+  - **7 primitivas nuevas** en `ui/components/restaurant/`: `FloorPlan`,
+    `ModifierPicker`, `NumPad`, `TipSelector`, `CourseTimeline`,
+    `OrderTicket`, `SplitBillSheet` — ver `docs/ux/design-system-extension.md`.
+  - **Prototipo `MeseroScreen`** implementando el Flujo 1 completo (mesa →
+    categoría → platillo → modificadores → comanda). Meta "comanda ≤ 3
+    toques" validada por `ui/flows/comandaFlow.ts` + test automatizado (no
+    solo medida a ojo): 2 toques sin modificadores requeridos, 3 con uno;
+    regla de diseño registrada de que un platillo con 2+ grupos requeridos no
+    puede cumplir la meta.
+  - **Verificado**: `npm run typecheck` limpio, `npm test` 18/18 verdes,
+    `npm run build` sin errores, dev server (puerto 5190) responde 200.
+    Verificación visual en navegador real NO se hizo en esta sesión (sin
+    herramienta de captura de pantalla disponible) — recomendado que el
+    dueño abra `http://localhost:5190` tras `npm run dev` para confirmar
+    visualmente antes de considerar el prototipo cerrado del todo.
+  - Docs nuevos: `docs/ux/design-system-extension.md`.
