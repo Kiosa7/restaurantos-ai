@@ -6,9 +6,25 @@ cocina en red local — con IA 100% local vía Ollama, y la nube solo como
 asistencia (respaldo, sync, licencias, CFDI), nunca como dependencia.
 
 > Estado: **en construcción activa**, evolución vertical de
-> [`pos-inteligente`](#relación-con-pos-inteligente). Repo privado.
+> [`pos-inteligente`](#relación-con-pos-inteligente).
 
 ![Arquitectura de RestaurantOS AI: hub Tauri en la PC del restaurante conectado por WebSocket a tablets de mesero y KDS de cocina, con sync opcional hacia la nube](docs/assets/architecture-diagram.svg)
+
+---
+
+## Capturas reales
+
+Prototipo funcional de la Fase 6: el mesero manda la comanda y la cocina la
+ve en vivo, de punta a punta contra el hub real (Rust/axum), no un mock.
+
+| Mesero — plano de mesas | Mesero — comanda en construcción |
+|---|---|
+| ![Pantalla del mesero mostrando el plano de mesas con 5 mesas coloreadas por estado: libre, ocupada, por limpiar y reservada](docs/assets/screenshot-mesero-mesas.png) | ![Pantalla del mesero con la Mesa 1 seleccionada, dos platillos agregados (Tacos al pastor y Quesadilla de flor de calabaza), total $155.00 y botón Enviar a cocina](docs/assets/screenshot-mesero-comanda.png) |
+
+**Cocina (KDS)** — recibe la comanda enviada por el mesero en menos de un
+segundo, vía el protocolo validado en el [spike 1](docs/spikes/spike-1-multiterminal.md):
+
+![Pantalla de cocina (KDS) conectada al hub mostrando la tarjeta de la Mesa 1 con los dos platillos recién enviados](docs/assets/screenshot-kds.png)
 
 ---
 
@@ -124,4 +140,5 @@ CFDI 4.0.
 
 ## Licencia
 
-Proyecto privado, sin licencia pública por ahora.
+Código disponible públicamente, sin una licencia de código abierto formal
+todavía — todos los derechos reservados por ahora.
