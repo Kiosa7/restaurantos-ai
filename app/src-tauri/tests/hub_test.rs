@@ -722,3 +722,32 @@ fn auditoria_lista_y_detecta_manipulacion_de_la_cadena() {
     assert_eq!(verificacion_despues["valid"], false, "la manipulación directa se detecta");
     assert_eq!(verificacion_despues["brokenAtSeq"], 1);
 }
+
+/// Fase 8: API pública — key en claro solo se ve una vez, el hub solo
+/// guarda el hash; scopes se respetan; revocar corta el acceso de inmediato.
+#[test]
+fn api_publica_respeta_scopes_y_revocacion() {
+    use app_lib::api_public::*;
+
+    let conn = fresh_seeded_db();
+
+    let created = create_api_key(&conn, &CreateApiKeyPayload {
+        name: "Contpaqi".into(), scopes: vec!["sales.read".into()],
+    }).expect("debe poder crear la key");
+    let key = created["key"].as_str().unwrap().to_string();
+    assert!(key.starts_with("rak_"));
+
+    assert!(authenticate(&conn, &key, "sales.read").is_ok(), "el scope correcto se acepta");
+    assert!(authenticate(&conn, &key, "menu.read").is_err(), "un scope no otorgado se rechaza");
+    assert!(authenticate(&conn, "rak_no_existe", "sales.read").is_err(), "una key inexistente se rechaza");
+
+    let listado = list_api_keys(&conn);
+    assert_eq!(listado.as_array().unwrap().len(), 1);
+    let id = created["id"].as_str().unwrap().to_string();
+
+    revoke_api_key(&conn, &id).expect("debe poder revocarse");
+    assert!(authenticate(&conn, &key, "sales.read").is_err(), "una key revocada deja de servir de inmediato");
+    assert!(revoke_api_key(&conn, &id).is_err(), "revocar dos veces la misma key falla");
+
+    assert!(create_api_key(&conn, &CreateApiKeyPayload { name: "X".into(), scopes: vec!["scope_invalido".into()] }).is_err(), "un scope desconocido se rechaza al crear");
+}

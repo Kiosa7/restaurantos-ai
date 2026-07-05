@@ -15,6 +15,7 @@ import { FacturaGlobalPanel } from "@ui/components/FacturaGlobalPanel";
 import { ReportesPanel } from "@ui/components/ReportesPanel";
 import { PluginsPanel } from "@ui/components/PluginsPanel";
 import { AuditoriaPanel } from "@ui/components/AuditoriaPanel";
+import { ApiPublicaPanel } from "@ui/components/ApiPublicaPanel";
 
 // MVP (Fase 6 §10.5): un solo mesero de turno del seed demo. RBAC/PIN (§10.6)
 // ya autentica a quien opera la Caja (ver PinGate en App.tsx), pero el turno
@@ -288,6 +289,9 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
       </div>
       <div className="md:col-span-2">
         <AuditoriaPanel apiUrl={apiUrl} />
+      </div>
+      <div className="md:col-span-2">
+        <ApiPublicaPanel apiUrl={apiUrl} />
       </div>
     </div>
   );

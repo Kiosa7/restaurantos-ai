@@ -12,6 +12,7 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, Query, State,
     },
+    http::HeaderMap,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -172,6 +173,10 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/plugins/:id/toggle", post(post_plugin_toggle))
         .route("/audit-log", get(get_audit_log))
         .route("/audit-log/verify", get(get_audit_log_verify))
+        .route("/api-keys", get(get_api_keys).post(post_api_key))
+        .route("/api-keys/:id/revoke", post(post_api_key_revoke))
+        .route("/api/v1/sales", get(get_public_sales))
+        .route("/api/v1/menu", get(get_public_menu))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -278,6 +283,57 @@ async fn get_audit_log(State(state): State<Arc<HubState>>, Query(q): Query<Audit
 async fn get_audit_log_verify(State(state): State<Arc<HubState>>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
     Json(crate::audit::verify_chain(&conn))
+}
+
+async fn get_api_keys(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::api_public::list_api_keys(&conn))
+}
+
+async fn post_api_key(State(state): State<Arc<HubState>>, Json(payload): Json<crate::api_public::CreateApiKeyPayload>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match crate::api_public::create_api_key(&conn, &payload) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn post_api_key_revoke(State(state): State<Arc<HubState>>, Path(id): Path<String>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match crate::api_public::revoke_api_key(&conn, &id) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+/// `Bearer <key>` — la API pública (`/api/v1/*`) es la única superficie del
+/// hub pensada para exponerse fuera de la LAN de confianza, por eso exige
+/// credencial explícita (a diferencia de `/menu`, `/checkout`, etc., que
+/// asumen red de restaurante confiable, mismo criterio que el resto del hub).
+fn bearer_key(headers: &HeaderMap) -> Option<&str> {
+    headers.get("authorization")?.to_str().ok()?.strip_prefix("Bearer ")
+}
+
+async fn get_public_sales(State(state): State<Arc<HubState>>, headers: HeaderMap) -> impl IntoResponse {
+    let Some(key) = bearer_key(&headers) else {
+        return domain_error_response("falta Authorization: Bearer <key>".into());
+    };
+    let conn = state.db.lock().unwrap();
+    match crate::api_public::authenticate(&conn, key, "sales.read") {
+        Ok(()) => Json(crate::api_public::public_sales(&conn, 200)).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn get_public_menu(State(state): State<Arc<HubState>>, headers: HeaderMap) -> impl IntoResponse {
+    let Some(key) = bearer_key(&headers) else {
+        return domain_error_response("falta Authorization: Bearer <key>".into());
+    };
+    let conn = state.db.lock().unwrap();
+    match crate::api_public::authenticate(&conn, key, "menu.read") {
+        Ok(()) => Json(commands::menu_json(&conn)).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
 }
 
 async fn get_customers(State(state): State<Arc<HubState>>) -> impl IntoResponse {

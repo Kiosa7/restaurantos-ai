@@ -477,9 +477,23 @@ Fase 2 por falta de cuenta de PAC).
    binario real (conflicto LWW real vía `/sync/push` con un evento de HLC
    deliberadamente antiguo, que pierde y queda trazado) y con revisión
    visual en Playwright (2026-07-05).
-4. **API pública** — exponer un subconjunto de los endpoints ya existentes
-   bajo autenticación por API key para integraciones de terceros
-   (contabilidad, agregadores de delivery reales).
+4. ✅ **API pública** — migración 0020 (`api_keys`, key en claro con
+   prefijo `rak_`, solo el `sha256` se guarda — mismo patrón que los PIN
+   de empleado). `api_public.rs` (`create_api_key`/`list_api_keys`/
+   `revoke_api_key`/`authenticate`), rutas de administración
+   `GET/POST /api-keys` y `POST /api-keys/:id/revoke` (dentro del hub,
+   protegidas implícitamente igual que el resto por estar en la LAN de
+   confianza) y la superficie PÚBLICA real bajo `/api/v1/*`
+   (`GET /api/v1/sales` scope `sales.read`, `GET /api/v1/menu` scope
+   `menu.read`), la ÚNICA parte del hub pensada para exponerse fuera de la
+   LAN — exige `Authorization: Bearer <key>` y valida el scope exacto,
+   a diferencia del resto del hub (`/menu`, `/checkout`, etc.) que asume
+   red de restaurante confiable sin token. `ApiPublicaPanel.tsx`: genera
+   keys con scopes elegibles, muestra la key en claro UNA sola vez (con
+   aviso), lista/revoca. Verificado contra el binario real: sin
+   `Authorization` se rechaza, con scope correcto funciona, con scope
+   equivocado se rechaza, una key inventada se rechaza, revocar corta el
+   acceso de inmediato — más revisión visual del panel (2026-07-05).
 5. **Franquicias, visión avanzada** — sin empezar; visión avanzada
    (OCR/cámara cenital) depende de hardware que no existe en esta máquina
    (cámara cenital real), mismo patrón de bloqueo que la impresora térmica
@@ -555,10 +569,11 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   (puerto real, no simulado, verificado con dos binarios sincronizando
   entre sí), plugins/marketplace ✅ (registro enable/disable sobre la
   tabla `plugins` heredada de 0008, nunca usada hasta ahora; 4 paneles de
-  Fase 7 ahora apagables en vivo) y auditoría avanzada ✅ (UI real sobre
-  `audit_log` + verificación de integridad de la cadena de hash completa).
-  Faltan API pública, franquicias y visión avanzada — ver §10.2
-  (2026-07-05).
+  Fase 7 ahora apagables en vivo), auditoría avanzada ✅ (UI real sobre
+  `audit_log` + verificación de integridad de la cadena de hash completa)
+  y API pública ✅ (`/api/v1/*` con API keys + scopes, la única superficie
+  del hub pensada para exponerse fuera de la LAN). Faltan franquicias y
+  visión avanzada — ver §10.2 (2026-07-05).
 
 ## Bitácora
 
@@ -1356,3 +1371,41 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     reales del hub corriendo.
   - Sigue pendiente de Fase 8: API pública, franquicias, visión avanzada
     — ver §10.2.
+- 2026-07-05: Fase 8 (Enterprise) — API pública.
+  - **Migración 0020** (`api_keys`): key en claro con prefijo `rak_`
+    (24 bytes aleatorios en hex), el hub solo guarda `sha256(key)` —
+    exactamente el mismo patrón que ya existía para los PIN de empleado
+    (`hash_pin`). La key en claro se genera una sola vez, al crearla; no
+    hay forma de recuperarla después (ni el propio hub la guarda).
+  - **`api_public.rs`**: `create_api_key` (valida nombre + scopes contra
+    una lista blanca — `sales.read`/`menu.read` en v1), `list_api_keys`
+    (nunca expone el hash, solo metadata), `revoke_api_key` (idempotente:
+    revocar dos veces falla), `authenticate` (hashea la key recibida,
+    busca por `key_hash`, rechaza si está revocada o si el scope pedido
+    no está en su lista, y sella `last_used_at`).
+  - **Dos superficies HTTP distintas a propósito**: `/api-keys` (gestión,
+    dentro del hub, protegida implícitamente igual que `/customers` o
+    `/plugins` por estar en la LAN de confianza — la genera/revoca quien
+    ya entró con PIN a Caja) vs `/api/v1/*` (`GET /api/v1/sales`,
+    `GET /api/v1/menu`) — la ÚNICA parte de TODO el hub diseñada para
+    poder exponerse fuera de la red del restaurante, por eso exige
+    `Authorization: Bearer <key>` explícito y valida scope, a diferencia
+    del resto de endpoints del hub que asumen la LAN de confianza sin
+    token (mismo criterio arquitectónico que ya regía pairing/PIN: cada
+    superficie tiene el nivel de fricción que corresponde a su exposición
+    real, no fricción pareja en todos lados).
+  - **`ApiPublicaPanel.tsx`**: formulario nombre+scopes, muestra la key en
+    claro UNA vez en un aviso ámbar, lista keys existentes con botón
+    revocar.
+  - Verificado: `cargo test` 18/18 (nuevo
+    `api_publica_respeta_scopes_y_revocacion`), `npm test` 23/23
+    (conteo de migraciones TS actualizado a 20), typecheck/build
+    limpios. Contra el binario real (script Node, 10 aserciones vía
+    `fetch`): sin `Authorization` se rechaza; con la key y el scope
+    correcto `/api/v1/sales` responde con datos reales; la MISMA key sin
+    el scope `menu.read` no puede leer `/api/v1/menu`; una key inventada
+    se rechaza; revocar corta el acceso de inmediato (no hay caché ni
+    ventana de gracia); el listado refleja `revokedAt`. Revisión visual
+    con Playwright: se generó una key desde la propia UI y se confirmó
+    que el aviso con la key en claro aparece.
+  - Sigue pendiente de Fase 8: franquicias, visión avanzada — ver §10.2.

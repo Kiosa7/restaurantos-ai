@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod api_public;
 pub mod audit;
 pub mod backup;
 pub mod commands;

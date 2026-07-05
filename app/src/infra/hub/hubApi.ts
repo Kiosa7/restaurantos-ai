@@ -434,3 +434,32 @@ export async function verifyAuditChain(baseUrl = DEFAULT_BASE): Promise<AuditCha
   const res = await fetch(`${baseUrl}/audit-log/verify`);
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Fase 8: API pública (integraciones de terceros)
+// ---------------------------------------------------------------------------
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  scopes: string[];
+  createdAt: number;
+  revokedAt: number | null;
+  lastUsedAt: number | null;
+}
+
+export async function fetchApiKeys(baseUrl = DEFAULT_BASE): Promise<ApiKey[]> {
+  const res = await fetch(`${baseUrl}/api-keys`);
+  return res.json();
+}
+
+export function createApiKey(
+  body: { name: string; scopes: string[] },
+  baseUrl = DEFAULT_BASE,
+): Promise<{ id: string; name: string; key: string; nota: string }> {
+  return postJson(baseUrl, "/api-keys", body);
+}
+
+export function revokeApiKey(id: string, baseUrl = DEFAULT_BASE): Promise<{ id: string; revoked: boolean }> {
+  return postJson(baseUrl, `/api-keys/${id}/revoke`, {});
+}
