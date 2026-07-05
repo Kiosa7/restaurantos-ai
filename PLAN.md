@@ -206,9 +206,9 @@ marketplace · Auditoría avanzada · Franquicias · API pública · Visión ava
 | **2 Arquitectura** ✅ | Docs formales (`docs/`) + **4 spikes de riesgo** | Spikes verdes (2/4 con hardware/cuenta ⛔ pendiente, ver bitácora) |
 | **3 UX/UI** ✅ | Flujos mesero/cocina/caja, wireframes, extensión Design System | Comanda ≤ 3 toques validada por test automatizado |
 | **4 Base de datos** ✅ | Migraciones nuevas: menú/modificadores, mesas, comandas/tiempos, recetas/insumos, turnos/propinas, tablas CFDI | Esquema validado con datos reales (node:sqlite, servicio completo simulado) |
-| **5 Infraestructura** 🟡 | Hub server (HTTP+WS) ✅, pairing MVP ✅, servido de PWA ✅ — updater y empaquetado ⛔ | "Instalación limpia en PC virgen < 30 min" SIN validar (falta `tauri build`) |
-| **6 MVP** 🟡 ⬅️ SIGUIENTE | Módulos §7 — arrancado: mesero↔hub↔KDS end-to-end real. Falta: caja/cortes, menú-recetas en pantalla, turnos/propinas en UI, impresión real, RBAC/PIN, backup, asistente IA v1 conectado | **Un restaurante piloto opera un servicio de viernes completo sin tocar papel** — lejos aún |
-| **7 Comercial** ⬜ | CFDI, delivery, reservas, promos, compras | Primer cliente de pago facturando |
+| **5 Infraestructura** 🟡 | Hub server (HTTP+WS) ✅, pairing real ✅ (genera/persiste, enforcement ⛔), servido de PWA ✅ — updater y empaquetado ⛔ | "Instalación limpia en PC virgen < 30 min" SIN validar (falta `tauri build`, decisión de posponerlo ya tomada) |
+| **6 MVP** ✅ | Los 9 puntos de §10 abordados: comandas/inventario/caja/turnos/impresión(sw)/RBAC/backup/IA/pairing, todo verificado contra el binario real | **Un restaurante piloto opera un servicio de viernes completo sin tocar papel** — el software ya lo soporta; falta el piloto real (⛔ §11.4) para decir que se cumplió en la práctica |
+| **7 Comercial** 🟡 ⬅️ SIGUIENTE | CFDI (generación ✅, timbrado ⛔), delivery, reservas, promos, compras+OCR, clientes, reportes avanzados — todo excepto CFDI sin empezar | Primer cliente de pago facturando — lejos, falta timbrado real y el resto de módulos |
 | **8 Enterprise** ⬜ | Multi-sucursal, plugins, API pública | Cadena 3+ sucursales sincronizando |
 
 Entregables documentales de la Fase 2 (crear en `docs/`): visión de producto ·
@@ -300,7 +300,55 @@ salvo donde se anota dependencia):
 **Criterio de éxito de Fase 6 no depende solo de código**: necesita el
 restaurante piloto (⛔ §11.4) para el "sin tocar papel" real; mientras tanto,
 validar cada módulo con el seed demo (`seedRestaurant.ts`) es suficiente para
-marcarlo ✅ técnicamente.
+marcarlo ✅ técnicamente. **Fase 6 quedó cerrada el 2026-07-04** (ver bitácora).
+
+## 10.1 PRÓXIMO PASO CONCRETO — completar Fase 7 (Comercial)
+
+Fase 6 completa (§9, §13). Fase 7 arrancó con la pieza de mayor riesgo
+regulatorio ya resuelta en software: generación de CFDI 4.0
+(`POST /cfdi/generate`, `commands.rs::generate_cfdi`) sobre el modelo de
+datos de 0015, con conceptos y totales que coinciden con la venta real,
+verificado contra el binario (`cargo test` + flujo WS+HTTP en vivo).
+
+**Lo que falta para cerrar Fase 7** (orden sugerido por dependencia/riesgo):
+
+1. ⛔ **Timbrado real** — conectar `generate_cfdi` a un PAC de verdad
+   (SW Sapien primario, spike 3). Bloqueado: no hay cuenta/credenciales.
+   Cuando existan, el cambio es acotado: `commands.rs` ya arma el documento
+   estructural; falta portar `spikes/cfdi/client.mjs` (`FacturamaClient`/
+   `SwSapienClient`) a Rust con `reqwest` (mismo patrón que `ai.rs`) y
+   llamarlo tras `generate_cfdi`, actualizando `estado`/`uuid_fiscal`/`xml`.
+2. **Factura global y complemento de pago** — el modelo de datos (0015) ya
+   tiene `cfdi_pago_complementos` y soporta `sale_id IS NULL` (factura
+   global); falta la lógica que agrupa varias ventas del día.
+3. **Clientes** — la tabla `customers` existe (heredada de 0005 de
+   pos-inteligente) pero no se usa desde ninguna pantalla del restaurante
+   todavía; ligarla a `sales`/`cfdi_documents` (el RFC/nombre del receptor
+   hoy se captura suelto en cada factura, no contra un cliente guardado).
+4. **Inventario completo + compras/proveedores con OCR** — `purchases`/
+   `suppliers`/`supplier_prices` existen (heredados de 0005/0007) sin UI
+   restaurantera; el pipeline OCR de facturas con `llava` ya existe en
+   pos-inteligente (no portado aún).
+5. **Reservaciones** — módulo nuevo, sin modelo de datos todavía.
+6. **Delivery/para llevar** — módulo nuevo, sin modelo de datos todavía.
+7. **Promociones** — `promotions` existe (heredado de 0008) sin UI ni lógica
+   de aplicación en el checkout del restaurante.
+8. **Fidelización** — módulo nuevo.
+9. **Reportes avanzados** — hay 6 vistas de reporte (0016) ya explotadas por
+   el asistente de IA (§10 punto 8); "avanzados" implica UI de reportes
+   dedicada (gráficas, exportar), no vistas nuevas.
+
+**Ninguno de estos bloquea empezar el siguiente**: son módulos
+independientes entre sí salvo (1)→(2) (timbrado antes que factura global).
+
+## 10.2 Fase 8 (Enterprise) — sin empezar
+
+No se tocó código de Fase 8 en esta sesión. Recordatorio de alcance (§7,
+§9): multi-sucursal (el protocolo de sync HLC/outbox de pos-inteligente ya
+está validado por simulación y se reserva exactamente para esto, no hace
+falta re-diseñarlo), plugins/marketplace (el modelo ya está documented en
+`docs/permisos-plugins.md` desde Fase 2, falta implementarlo), auditoría
+avanzada, franquicias, API pública, visión avanzada (OCR/cámara cenital).
 
 ## 11. Supuestos pendientes de confirmar con el dueño
 
@@ -357,7 +405,14 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   (código + verificación real); lo que falta son 2 piezas que dependen de
   algo fuera del código (hardware físico) o de una decisión de ruptura
   deliberada (enforcement de pairing) — ver §10 y bitácora 2026-07-04.
-- ⬜ Fases 7–8 — sin empezar, ver §9.
+- 🟡 Fase 7 Comercial — ARRANCADA: generación de CFDI 4.0 real sobre el
+  modelo de 0015 (`POST /cfdi/generate`, folio/conceptos/totales correctos,
+  verificado contra el binario). ⛔ Timbrado real bloqueado (spike 3, sin
+  cuenta de PAC). El resto de Fase 7 (factura global, clientes, inventario+
+  compras+OCR, reservaciones, delivery, promociones, fidelización, reportes
+  avanzados) sin empezar — ver §10.1 para el desglose y orden sugerido
+  (2026-07-04).
+- ⬜ Fase 8 Enterprise — sin empezar, ver §9 y §10.2.
 
 ## Bitácora
 
@@ -763,3 +818,41 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   ya tomada de posponerlo). Ninguno de estos bloquea seguir construyendo:
   son piezas que dependen de un recurso externo o de una decisión de
   producto, no de más diseño.
+- 2026-07-04: Fase 7 arrancada (modo autónomo total) — CIERRE DE SESIÓN.
+  - **Generación de CFDI 4.0 real**: `commands.rs::generate_cfdi` arma el
+    documento completo (emisor sembrado con RFC genérico de pruebas del SAT,
+    folio secuencial por local, conceptos desde `sale_items` con clave SAT
+    genérica de "servicios de restaurante", totales que se toman
+    DIRECTAMENTE de la venta ya cobrada, no se recalculan) y lo persiste en
+    `cfdi_documents`/`cfdi_conceptos` en estado `'pendiente'`. Expuesto en
+    `POST /cfdi/generate` y `GET /cfdi/by-sale/:id`. Botón "Generar factura"
+    en `CajaScreen` tras un cobro exitoso, con campos de RFC/nombre del
+    receptor (default "público en general").
+  - Reglas de negocio ya cubiertas por test: una venta solo puede tener UN
+    CFDI (`generate_cfdi` rechaza el segundo intento); el total del CFDI
+    coincide exactamente con el de la venta.
+  - ⛔ El TIMBRADO (llamar al PAC de verdad) sigue bloqueado — sin cambio
+    desde el spike 3 de Fase 2: no hay cuenta/credenciales de SW Sapien ni
+    Facturama. El documento generado es estructuralmente válido pero nunca
+    pasa de `estado='pendiente'`. Cuando exista la cuenta, conectar es
+    acotado: portar `spikes/cfdi/client.mjs` a Rust con `reqwest` (mismo
+    patrón que `ai.rs`) y llamarlo desde `generate_cfdi` o un paso posterior.
+  - Verificado: `cargo test` 8/8 (nuevo
+    `genera_cfdi_a_partir_de_una_venta_cobrada`), `npm test` 23/23,
+    typecheck/build limpios, y flujo completo contra el binario real
+    (comanda→cobro→CFDI con folio y totales correctos→consulta por venta).
+  - **Por qué se detuvo aquí y no se completó toda la Fase 7 y la Fase 8**:
+    el resto de Fase 7 (factura global, clientes, inventario+compras+OCR,
+    reservaciones, delivery, promociones, fidelización, reportes avanzados)
+    y toda la Fase 8 (multi-sucursal, plugins, auditoría, franquicias, API
+    pública, visión avanzada) son, cada una, un conjunto de módulos nuevos
+    del tamaño de lo que tomó toda la Fase 6 — intentar todas en la misma
+    sesión con el mismo estándar de verificación real (no solo diseño en el
+    papel) habría sacrificado la rigurosidad que se mantuvo en las 6 fases
+    anteriores. Se priorizó CFDI por ser el requisito regulatorio central de
+    ADR-3 (México) y porque su modelo de datos ya existía desde Fase 4.
+  - **Próximo paso concreto para quien retome**: §10.1 de este documento
+    tiene el desglose completo y el orden sugerido para terminar Fase 7;
+    §10.2 tiene el recordatorio de alcance de Fase 8. El timbrado real (1)
+    es lo único bloqueado por un recurso externo; todo lo demás es
+    diseño+código nuevo sin bloqueos técnicos identificados.
