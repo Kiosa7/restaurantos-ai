@@ -295,3 +295,43 @@ fn pairing_genera_y_redime_un_codigo_de_un_solo_uso() {
 
     assert!(generate_pairing(&conn, "rol_invalido").is_err());
 }
+
+/// Fase 7 (arranque): generar un CFDI real a partir de una venta ya cobrada.
+/// El timbrado (llamar al PAC) sigue ⛔ bloqueado (spike 3) — esto valida
+/// que el documento estructural (conceptos, totales) se arma correctamente.
+#[test]
+fn genera_cfdi_a_partir_de_una_venta_cobrada() {
+    use app_lib::commands::*;
+
+    let conn = fresh_seeded_db();
+
+    let payload: NuevaComandaPayload = serde_json::from_value(json!({
+        "tableNumber": 5,
+        "items": [{ "productId": "mi_tacos_pastor", "cantidad": 2, "modificadores": [{"groupId":"mg_salsa","optionId":"op_salsa_verde"}] }]
+    })).unwrap();
+    let order = handle_nueva_comanda(&conn, &payload).unwrap();
+
+    let checkout_payload: CheckoutPayload = serde_json::from_value(json!({
+        "orderId": order["orderId"], "paymentMethod": "tarjeta"
+    })).unwrap();
+    let sale = handle_checkout(&conn, &checkout_payload).unwrap();
+    let sale_id = sale["saleIds"][0].as_str().unwrap().to_string();
+    let total_cents = sale["totalCents"].as_i64().unwrap();
+
+    let cfdi_payload = GenerateCfdiPayload {
+        sale_id: sale_id.clone(),
+        rfc_receptor: "XEXX010101000".into(),
+        nombre_receptor: "PUBLICO EN GENERAL".into(),
+        uso_cfdi: "G03".into(),
+    };
+    let doc = generate_cfdi(&conn, &cfdi_payload).expect("debe generar el CFDI sin error");
+    assert_eq!(doc["estado"], "pendiente", "el timbrado real sigue bloqueado (⛔ spike 3)");
+    assert_eq!(doc["totalCents"], total_cents, "el total del CFDI debe coincidir con el de la venta");
+    assert_eq!(doc["conceptos"].as_array().unwrap().len(), 1);
+
+    // No se puede generar dos veces para la misma venta.
+    assert!(generate_cfdi(&conn, &cfdi_payload).is_err());
+
+    let fetched = get_cfdi_document(&conn, &sale_id);
+    assert_eq!(fetched["folio"], doc["folio"]);
+}

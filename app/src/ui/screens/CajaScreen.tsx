@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Card, Segmented, useToast } from "@ui/components/ui";
+import { Button, Card, Input, Segmented, useToast } from "@ui/components/ui";
 import { SplitBillSheet, TipSelector, type SplitMode } from "@ui/components/restaurant";
 import { formatMoney, cents } from "@domain/money";
 import { HubClient } from "@infra/hub/hubClient";
-import { checkout, closeShift, fetchOpenOrders, openShift, type OpenOrder } from "@infra/hub/hubApi";
+import { checkout, closeShift, fetchOpenOrders, generateCfdi, openShift, type OpenOrder } from "@infra/hub/hubApi";
 import { cuentaTicket } from "@infra/print/tickets";
 import { printTicket } from "@infra/print/printClient";
 import { BackupPanel } from "@ui/components/BackupPanel";
@@ -27,6 +27,11 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
   const [shiftId, setShiftId] = useState<string | null>(null);
   const [turnoResumen, setTurnoResumen] = useState<string | null>(null);
   const [ultimaCuenta, setUltimaCuenta] = useState<Uint8Array | null>(null);
+  const [ultimaSaleId, setUltimaSaleId] = useState<string | null>(null);
+  const [rfcReceptor, setRfcReceptor] = useState("XAXX010101000");
+  const [nombreReceptor, setNombreReceptor] = useState("PUBLICO EN GENERAL");
+  const [facturando, setFacturando] = useState(false);
+  const [factura, setFactura] = useState<string | null>(null);
   const hubRef = useRef<HubClient | null>(null);
   const { toast } = useToast();
 
@@ -67,6 +72,8 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
         apiUrl,
       );
       setUltimoCobro(`Mesa ${res.mesa}: ${res.partes} venta(s) por ${formatMoney(cents(res.totalCents))} total.`);
+      setUltimaSaleId(res.saleIds[0]);
+      setFactura(null);
       setUltimaCuenta(
         cuentaTicket({
           folio: res.saleIds[0].slice(0, 8),
@@ -84,6 +91,22 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
       setUltimoCobro(`Error al cobrar: ${(e as Error).message}`);
     } finally {
       setCobrando(false);
+    }
+  }
+
+  /** Genera el CFDI 4.0 de la última venta (Fase 7). ⛔ Solo genera el
+   * documento — timbrarlo de verdad contra un PAC sigue bloqueado (spike 3,
+   * falta cuenta de SW Sapien/Facturama). */
+  async function facturar() {
+    if (!ultimaSaleId) return;
+    setFacturando(true);
+    try {
+      const doc = await generateCfdi({ saleId: ultimaSaleId, rfcReceptor, nombreReceptor }, apiUrl);
+      setFactura(`CFDI folio ${doc.folio} generado (estado: ${doc.estado}). ${doc.nota ?? ""}`);
+    } catch (e) {
+      setFactura(`No se pudo generar el CFDI: ${(e as Error).message}`);
+    } finally {
+      setFacturando(false);
     }
   }
 
@@ -160,11 +183,20 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
           </div>
         )}
         {ultimoCobro && (
-          <div className="mt-3 flex flex-col gap-2">
+          <div className="mt-3 flex flex-col gap-3">
             <p className="text-sm text-slate-600">{ultimoCobro}</p>
             {ultimaCuenta && (
               <Button size="sm" variant="outline" onClick={imprimirCuenta}>Imprimir cuenta</Button>
             )}
+            {ultimaSaleId && !factura && (
+              <div className="flex flex-col gap-2 rounded-[var(--radius-field)] border border-slate-200 p-3">
+                <p className="text-xs font-semibold text-slate-500">Facturar (CFDI 4.0)</p>
+                <Input value={rfcReceptor} onChange={(e) => setRfcReceptor(e.target.value.toUpperCase())} placeholder="RFC receptor" />
+                <Input value={nombreReceptor} onChange={(e) => setNombreReceptor(e.target.value)} placeholder="Nombre / razón social" />
+                <Button size="sm" onClick={facturar} loading={facturando}>Generar factura</Button>
+              </div>
+            )}
+            {factura && <p className="text-xs text-slate-500">{factura}</p>}
           </div>
         )}
       </Card>

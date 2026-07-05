@@ -10,7 +10,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        Path, Query, State,
     },
     response::IntoResponse,
     routing::{get, post},
@@ -150,6 +150,8 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/tips/summary", get(get_tips_summary))
         .route("/backup/export", get(get_backup_export))
         .route("/ai/chat", post(post_ai_chat))
+        .route("/cfdi/generate", post(post_cfdi_generate))
+        .route("/cfdi/by-sale/:sale_id", get(get_cfdi_by_sale))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -161,6 +163,19 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
 
 async fn health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok", "serverTime": now_ms() }))
+}
+
+async fn post_cfdi_generate(State(state): State<Arc<HubState>>, Json(payload): Json<commands::GenerateCfdiPayload>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match commands::generate_cfdi(&conn, &payload) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn get_cfdi_by_sale(State(state): State<Arc<HubState>>, Path(sale_id): Path<String>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(commands::get_cfdi_document(&conn, &sale_id))
 }
 
 async fn post_pair_generate(State(state): State<Arc<HubState>>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {

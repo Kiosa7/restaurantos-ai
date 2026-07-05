@@ -136,3 +136,24 @@ export async function fetchPairedDevices(baseUrl = DEFAULT_BASE): Promise<Paired
   const res = await fetch(`${baseUrl}/pair/devices`);
   return res.json();
 }
+
+export interface CfdiDocument {
+  documentId: string;
+  folio: string;
+  estado: string;
+  rfcReceptor: string;
+  nombreReceptor: string;
+  subtotalCents?: number;
+  ivaCents?: number;
+  totalCents: number;
+  conceptos?: unknown[];
+  nota?: string;
+}
+
+/** Genera el documento CFDI 4.0 de una venta (Fase 7). Timbrado real sigue bloqueado (⛔ spike 3). */
+export function generateCfdi(
+  body: { saleId: string; rfcReceptor: string; nombreReceptor: string; usoCfdi?: string },
+  baseUrl = DEFAULT_BASE,
+): Promise<CfdiDocument> {
+  return postJson(baseUrl, "/cfdi/generate", body);
+}

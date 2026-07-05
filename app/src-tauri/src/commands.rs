@@ -709,3 +709,115 @@ pub fn touch_device_if_paired(conn: &Connection, device_id: &str) -> bool {
         .unwrap_or(0);
     updated > 0
 }
+
+// ---------------------------------------------------------------------------
+// CFDI 4.0 — generación del documento (Fase 7). El TIMBRADO real (llamar al
+// PAC) sigue ⛔ bloqueado — no hay cuenta/credenciales de SW Sapien ni
+// Facturama (spike 3, docs/spikes/spike-3-cfdi.md). Esto genera el documento
+// estructuralmente válido en estado 'pendiente'; timbrarlo es el siguiente
+// paso en cuanto exista una cuenta de PAC real.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct GenerateCfdiPayload {
+    #[serde(rename = "saleId")]
+    pub sale_id: String,
+    #[serde(rename = "rfcReceptor")]
+    pub rfc_receptor: String,
+    #[serde(rename = "nombreReceptor")]
+    pub nombre_receptor: String,
+    #[serde(rename = "usoCfdi", default = "default_uso_cfdi")]
+    pub uso_cfdi: String,
+}
+fn default_uso_cfdi() -> String { "G03".into() }
+
+/// Clave SAT genérica "Servicios de restaurante" (c_ClaveProdServ) — usarla
+/// para todos los conceptos es una simplificación de v1; un catálogo real
+/// mapearía cada producto a su clave específica (pendiente, no bloquea).
+const CLAVE_PROD_SERV_GENERICA: &str = "90111500";
+const CLAVE_UNIDAD_GENERICA: &str = "E48"; // "Unidad de servicio"
+
+pub fn generate_cfdi(conn: &Connection, payload: &GenerateCfdiPayload) -> Result<Value> {
+    let now = now_ms();
+
+    let (location_id, subtotal, tax_total, total): (String, i64, i64, i64) = conn
+        .query_row(
+            "SELECT location_id, subtotal, tax_total, total FROM sales WHERE id = ?1",
+            params![payload.sale_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .map_err(|_| err("la venta no existe"))?;
+
+    let already: Option<String> = conn
+        .query_row("SELECT id FROM cfdi_documents WHERE sale_id = ?1", params![payload.sale_id], |r| r.get(0))
+        .optional()
+        .map_err(|e| err(e.to_string()))?;
+    if let Some(existing_id) = already {
+        return Err(err(format!("esta venta ya tiene un CFDI generado ({existing_id})")));
+    }
+
+    let folio_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM cfdi_documents WHERE location_id = ?1", params![location_id], |r| r.get(0))
+        .unwrap_or(0);
+    let folio = format!("{:06}", folio_count + 1);
+
+    let doc_id = uuid7();
+    conn.execute(
+        "INSERT INTO cfdi_documents
+            (id,tenant_id,location_id,issuer_id,sale_id,tipo_comprobante,serie,folio,rfc_receptor,nombre_receptor,uso_cfdi,forma_pago,metodo_pago,moneda,subtotal,iva,total,estado,created_at,updated_at,origin_node)
+         VALUES (?1,?2,?3,?4,?5,'I','F',?6,?7,?8,?9,'01','PUE','MXN',?10,?11,?12,'pendiente',?13,?13,?14)",
+        params![doc_id, seed::TENANT, location_id, seed::CFDI_ISSUER, payload.sale_id, folio, payload.rfc_receptor, payload.nombre_receptor, payload.uso_cfdi, subtotal, tax_total, total, now, seed::NODE],
+    ).map_err(|e| err(e.to_string()))?;
+
+    let mut stmt = conn
+        .prepare("SELECT id, name_snapshot, unit_price, qty, line_total FROM sale_items WHERE sale_id = ?1")
+        .map_err(|e| err(e.to_string()))?;
+    let items: Vec<(String, String, i64, f64, i64)> = stmt
+        .query_map(params![payload.sale_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+        .map_err(|e| err(e.to_string()))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut conceptos_json = Vec::new();
+    for (sale_item_id, name, unit_price, qty, line_total) in &items {
+        conn.execute(
+            "INSERT INTO cfdi_conceptos (id,document_id,sale_item_id,clave_prod_serv,clave_unidad,descripcion,cantidad,valor_unitario,importe,created_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![uuid7(), doc_id, sale_item_id, CLAVE_PROD_SERV_GENERICA, CLAVE_UNIDAD_GENERICA, name, qty, unit_price, line_total, now],
+        ).map_err(|e| err(e.to_string()))?;
+        conceptos_json.push(json!({ "descripcion": name, "cantidad": qty, "valorUnitarioCents": unit_price, "importeCents": line_total }));
+    }
+
+    Ok(json!({
+        "documentId": doc_id,
+        "folio": folio,
+        "estado": "pendiente",
+        "rfcReceptor": payload.rfc_receptor,
+        "nombreReceptor": payload.nombre_receptor,
+        "subtotalCents": subtotal,
+        "ivaCents": tax_total,
+        "totalCents": total,
+        "conceptos": conceptos_json,
+        "nota": "Documento generado, NO timbrado — falta cuenta de PAC real (⛔ spike 3)."
+    }))
+}
+
+pub fn get_cfdi_document(conn: &Connection, sale_id: &str) -> Value {
+    conn.query_row(
+        "SELECT id, folio, estado, rfc_receptor, nombre_receptor, total FROM cfdi_documents WHERE sale_id = ?1",
+        params![sale_id],
+        |r| {
+            Ok(json!({
+                "documentId": r.get::<_, String>(0)?,
+                "folio": r.get::<_, String>(1)?,
+                "estado": r.get::<_, String>(2)?,
+                "rfcReceptor": r.get::<_, String>(3)?,
+                "nombreReceptor": r.get::<_, String>(4)?,
+                "totalCents": r.get::<_, i64>(5)?,
+            }))
+        },
+    )
+    .optional()
+    .unwrap()
+    .unwrap_or(Value::Null)
+}

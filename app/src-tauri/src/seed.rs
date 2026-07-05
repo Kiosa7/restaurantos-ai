@@ -29,6 +29,7 @@ pub const EMPLOYEE_CAJERO: &str = "e-cajero";
 pub const TAX_IVA: &str = "tax-iva-16";
 pub const PROFILE_IVA: &str = "prof-iva";
 pub const UNIT_PIEZA: &str = "unit-pieza";
+pub const CFDI_ISSUER: &str = "cfdi-issuer-demo";
 
 /// course inferido por categoría (MVP: no hay columna `course` en `products`,
 /// ver docs/db/schema-overview-restaurante.md — limitación conocida).
@@ -198,6 +199,15 @@ pub fn seed(conn: &Connection, now: i64) {
         "INSERT OR IGNORE INTO tip_pool_configs (id,tenant_id,location_id,mode,kitchen_share,active_from,created_at,updated_at,origin_node)
          VALUES ('tip-config-default',?1,?2,'individual',0,?3,?3,?3,?4)",
         params![TENANT, LOCATION, now, NODE],
+    ).unwrap();
+
+    // Emisor CFDI demo (Fase 7): RFC genérico de pruebas del SAT, NO uno
+    // real — sustituir antes de timbrar de verdad (⛔ spike 3, sin cuenta de
+    // PAC todavía).
+    conn.execute(
+        "INSERT OR IGNORE INTO cfdi_issuers (id,tenant_id,rfc,razon_social,regimen_fiscal,lugar_expedicion,pac_provider,created_at,updated_at,origin_node)
+         VALUES (?1,?2,'XAXX010101000','Restaurante Demo SA de CV','601','06000','sw_sapien',?3,?3,?4)",
+        params![CFDI_ISSUER, TENANT, now, NODE],
     ).unwrap();
 
     log::info!("hub: seed demo aplicado (idempotente)");
