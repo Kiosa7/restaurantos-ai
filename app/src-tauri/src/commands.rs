@@ -28,7 +28,7 @@ impl std::fmt::Display for DomainError {
 }
 type Result<T> = std::result::Result<T, DomainError>;
 
-fn err(msg: impl Into<String>) -> DomainError {
+pub fn err(msg: impl Into<String>) -> DomainError {
     DomainError(msg.into())
 }
 
@@ -389,6 +389,14 @@ pub struct CheckoutPayload {
     pub tip_cents: i64,
     #[serde(rename = "shiftId")]
     pub shift_id: Option<String>,
+    /// Cliente al que se liga la venta (Fase 7): acumula fidelización y
+    /// permite redimir puntos. Solo aplica en modo 'completo' (una sola
+    /// venta) — dividir la cuenta Y redimir puntos a la vez es un caso de
+    /// borde que se difiere (documentado).
+    #[serde(rename = "customerId")]
+    pub customer_id: Option<String>,
+    #[serde(rename = "redeemPoints", default)]
+    pub redeem_points: i64,
 }
 fn default_split_mode() -> String { "completo".into() }
 fn default_partes() -> i64 { 1 }
@@ -422,12 +430,27 @@ pub fn handle_checkout(conn: &Connection, payload: &CheckoutPayload) -> Result<V
         .map_err(|_| err("comanda no existe o ya está cerrada"))?;
 
     let summary = order_summary_json(conn, &payload.order_id, table_number, 0);
-    let total_cents = summary["totalCents"].as_i64().unwrap_or(0);
-    if total_cents <= 0 {
+    let gross_total_cents = summary["totalCents"].as_i64().unwrap_or(0);
+    if gross_total_cents <= 0 {
         return Err(err("la comanda no tiene ítems por cobrar"));
     }
 
     let partes = if payload.split_mode == "completo" { 1 } else { payload.partes.max(2) };
+
+    // Promociones y fidelización (Fase 7): solo aplican cuando se cobra la
+    // cuenta completa — dividirla Y aplicar descuentos a la vez es un caso
+    // de borde que se difiere (documentado en CheckoutPayload).
+    let mut discount_cents = 0_i64;
+    if partes == 1 {
+        if let Some((_, pct)) = crate::commerce::active_percent_off_promotion(conn) {
+            discount_cents += (gross_total_cents as f64 * pct).round() as i64;
+        }
+        if payload.redeem_points > 0 {
+            let customer_id = payload.customer_id.as_deref().ok_or_else(|| err("hay que elegir un cliente para redimir puntos"))?;
+            discount_cents += crate::commerce::redeem_loyalty(conn, customer_id, payload.redeem_points)?;
+        }
+    }
+    let total_cents = (gross_total_cents - discount_cents).max(0);
     let mut sale_ids = Vec::new();
     let mut remaining = total_cents;
 
@@ -445,9 +468,9 @@ pub fn handle_checkout(conn: &Connection, payload: &CheckoutPayload) -> Result<V
         let (prev_hash, hash) = next_hash(conn, seed::LOCATION, seq, &format!("{sale_id}{monto}"));
 
         conn.execute(
-            "INSERT INTO sales (id,tenant_id,location_id,register_id,employee_id,folio,datetime,subtotal,tax_total,total,payment_status,status,seq,prev_hash,hash,created_at,origin_node)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'paid','completed',?11,?12,?13,?14,?15)",
-            params![sale_id, seed::TENANT, seed::LOCATION, seed::REGISTER, seed::EMPLOYEE_CAJERO, folio, now, subtotal, tax, monto, seq, prev_hash, hash, now, seed::NODE],
+            "INSERT INTO sales (id,tenant_id,location_id,register_id,employee_id,customer_id,folio,datetime,subtotal,discount_total,tax_total,total,payment_status,status,seq,prev_hash,hash,created_at,origin_node)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'paid','completed',?13,?14,?15,?16,?17)",
+            params![sale_id, seed::TENANT, seed::LOCATION, seed::REGISTER, seed::EMPLOYEE_CAJERO, payload.customer_id, folio, now, subtotal, discount_cents, tax, monto, seq, prev_hash, hash, now, seed::NODE],
         ).map_err(|e| err(e.to_string()))?;
 
         if partes == 1 {
@@ -494,7 +517,15 @@ pub fn handle_checkout(conn: &Connection, payload: &CheckoutPayload) -> Result<V
         params![now, payload.order_id],
     ).map_err(|e| err(e.to_string()))?;
 
-    Ok(json!({ "saleIds": sale_ids, "totalCents": total_cents, "partes": partes, "mesa": table_number }))
+    let mut puntos_ganados = 0_i64;
+    if let Some(customer_id) = &payload.customer_id {
+        puntos_ganados = crate::commerce::accrue_loyalty(conn, customer_id, total_cents)?;
+    }
+
+    Ok(json!({
+        "saleIds": sale_ids, "totalCents": total_cents, "grossTotalCents": gross_total_cents,
+        "discountCents": discount_cents, "partes": partes, "mesa": table_number, "puntosGanados": puntos_ganados,
+    }))
 }
 
 // ---------------------------------------------------------------------------

@@ -335,3 +335,69 @@ fn genera_cfdi_a_partir_de_una_venta_cobrada() {
     let fetched = get_cfdi_document(&conn, &sale_id);
     assert_eq!(fetched["folio"], doc["folio"]);
 }
+
+/// Fase 7: cliente real, promoción activa y redención de puntos aplicados
+/// en un cobro real (no solo el cálculo aislado).
+#[test]
+fn cliente_promocion_y_puntos_se_aplican_en_el_cobro() {
+    use app_lib::commands::*;
+    use app_lib::commerce::*;
+
+    let conn = fresh_seeded_db();
+
+    // Cliente con puntos ya acumulados (simula compras previas).
+    let customer = create_customer(&conn, &CreateCustomerPayload {
+        name: "Juan Pérez".into(), phone: Some("5512345678".into()), email: None, tax_id: None,
+    }).unwrap();
+    let customer_id = customer["customerId"].as_str().unwrap().to_string();
+    conn.execute("UPDATE customers SET loyalty_points = 20 WHERE id = ?1", rusqlite::params![customer_id]).unwrap();
+
+    // Promoción activa: 10% off global.
+    create_promotion(&conn, &CreatePromotionPayload { name: "10% de descuento".into(), percent_off: 0.10, priority: 1 }).unwrap();
+
+    let payload: NuevaComandaPayload = serde_json::from_value(json!({
+        "tableNumber": 2, "items": [{ "productId": "mi_tacos_pastor", "cantidad": 2 }]
+    })).unwrap();
+    let order = handle_nueva_comanda(&conn, &payload).unwrap();
+
+    let checkout_payload: CheckoutPayload = serde_json::from_value(json!({
+        "orderId": order["orderId"], "paymentMethod": "efectivo",
+        "customerId": customer_id, "redeemPoints": 5
+    })).unwrap();
+    let sale = handle_checkout(&conn, &checkout_payload).unwrap();
+
+    // Bruto: 2 x $90 = $180 = 18000 centavos. 10% off = 1800. 5 puntos = $5 = 500 centavos.
+    assert_eq!(sale["grossTotalCents"], 18000);
+    assert_eq!(sale["discountCents"], 1800 + 500);
+    assert_eq!(sale["totalCents"], 18000 - 1800 - 500);
+
+    // Puntos: se descontaron los 5 redimidos y se ganaron por el monto cobrado.
+    let customers = list_customers(&conn);
+    let updated = customers.as_array().unwrap().iter().find(|c| c["customerId"] == customer_id).unwrap();
+    let esperados_ganados = sale["puntosGanados"].as_i64().unwrap();
+    assert_eq!(updated["puntos"], 20 - 5 + esperados_ganados);
+}
+
+/// Fase 7: comprar a un proveedor suma inventario de verdad (mismo patrón
+/// que el descuento por receta: TX explícita, no un trigger).
+#[test]
+fn compra_a_proveedor_suma_inventario_real() {
+    use app_lib::commands::now_ms;
+    use app_lib::commerce::*;
+
+    let conn = fresh_seeded_db();
+    let supplier = create_supplier(&conn, &CreateSupplierPayload { name: "Carnes del Valle".into(), lead_time_days: 2 }).unwrap();
+
+    let before: f64 = conn.query_row("SELECT qty FROM inventory WHERE product_id='insumo-carne-pastor'", [], |r| r.get(0)).unwrap();
+
+    let purchase: CreatePurchasePayload = serde_json::from_value(json!({
+        "supplierId": supplier["supplierId"],
+        "items": [{ "productId": "insumo-carne-pastor", "qty": 10.0, "unitCostCents": 8500 }]
+    })).unwrap();
+    let result = create_purchase(&conn, &purchase).unwrap();
+    assert_eq!(result["totalCents"], 85000);
+    let _ = now_ms();
+
+    let after: f64 = conn.query_row("SELECT qty FROM inventory WHERE product_id='insumo-carne-pastor'", [], |r| r.get(0)).unwrap();
+    assert_eq!(after, before + 10.0, "la compra sumó 10kg de carne al inventario real");
+}

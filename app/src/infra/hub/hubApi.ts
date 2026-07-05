@@ -54,13 +54,19 @@ export interface CheckoutRequest {
   paymentMethod: "efectivo" | "tarjeta";
   tipCents?: number;
   shiftId?: string;
+  /** Fase 7: liga la venta a un cliente y/o redime sus puntos de fidelización. */
+  customerId?: string;
+  redeemPoints?: number;
 }
 
 export interface CheckoutResponse {
   saleIds: string[];
   totalCents: number;
+  grossTotalCents: number;
+  discountCents: number;
   partes: number;
   mesa: number;
+  puntosGanados: number;
 }
 
 async function postJson<T>(baseUrl: string, path: string, body: unknown): Promise<T> {
@@ -156,4 +162,84 @@ export function generateCfdi(
   baseUrl = DEFAULT_BASE,
 ): Promise<CfdiDocument> {
   return postJson(baseUrl, "/cfdi/generate", body);
+}
+
+// ---------------------------------------------------------------------------
+// Fase 7: clientes, fidelización, promociones, compras y proveedores
+// ---------------------------------------------------------------------------
+
+export interface Customer {
+  customerId: string;
+  nombre: string;
+  telefono: string | null;
+  email: string | null;
+  puntos: number;
+  ultimaCompra: number | null;
+}
+
+export async function fetchCustomers(baseUrl = DEFAULT_BASE): Promise<Customer[]> {
+  const res = await fetch(`${baseUrl}/customers`);
+  return res.json();
+}
+
+export function createCustomer(
+  body: { name: string; phone?: string; email?: string; taxId?: string },
+  baseUrl = DEFAULT_BASE,
+): Promise<{ customerId: string }> {
+  return postJson(baseUrl, "/customers", body);
+}
+
+export interface Promotion {
+  promotionId: string;
+  nombre: string;
+  reglas: { type: string; value: number };
+  activa: boolean;
+}
+
+export async function fetchPromotions(baseUrl = DEFAULT_BASE): Promise<Promotion[]> {
+  const res = await fetch(`${baseUrl}/promotions`);
+  return res.json();
+}
+
+export function createPromotion(
+  body: { name: string; percentOff: number; priority?: number },
+  baseUrl = DEFAULT_BASE,
+): Promise<{ promotionId: string }> {
+  return postJson(baseUrl, "/promotions", body);
+}
+
+export interface Supplier {
+  supplierId: string;
+  nombre: string;
+  leadTimeDays: number;
+}
+
+export async function fetchSuppliers(baseUrl = DEFAULT_BASE): Promise<Supplier[]> {
+  const res = await fetch(`${baseUrl}/suppliers`);
+  return res.json();
+}
+
+export function createSupplier(
+  body: { name: string; leadTimeDays?: number },
+  baseUrl = DEFAULT_BASE,
+): Promise<{ supplierId: string }> {
+  return postJson(baseUrl, "/suppliers", body);
+}
+
+export function createPurchase(
+  body: { supplierId: string; items: { productId: string; qty: number; unitCostCents: number }[] },
+  baseUrl = DEFAULT_BASE,
+): Promise<{ purchaseId: string; folio: string; totalCents: number }> {
+  return postJson(baseUrl, "/purchases", body);
+}
+
+export interface OcrInvoiceLine {
+  name: string;
+  qty: number;
+  unitCost: number;
+}
+
+/** OCR de factura de proveedor (Fase 7, ⚠️ 30-60s en CPU — llamar siempre desde un botón, no automático). */
+export function ocrInvoice(imageBase64: string, baseUrl = DEFAULT_BASE): Promise<{ supplier: string | null; lines: OcrInvoiceLine[] }> {
+  return postJson(baseUrl, "/purchases/ocr", { imageBase64 });
 }

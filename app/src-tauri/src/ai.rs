@@ -164,3 +164,76 @@ pub async fn handle_chat(db: &Mutex<Connection>, http: &reqwest::Client, questio
     let final_msg = ollama_chat(http, &messages, None).await?;
     Ok(json!({ "answer": final_msg["content"].as_str().unwrap_or(""), "toolsUsadas": tools_usadas }))
 }
+
+// ---------------------------------------------------------------------------
+// OCR de facturas de proveedor (Fase 7 §10.1 punto 4) — puerto directo del
+// prompt de pos-inteligente (`app/src/app/usecases/extractInvoiceFromImage.ts`)
+// a Rust, contra `llava:7b` (visión). El pipeline YA estaba validado ahí; no
+// se re-diseñó, solo se re-implementó el llamado HTTP + parseo de JSON.
+// ⚠️ 30-60s por imagen en CPU (spike 4) — SIEMPRE async, nunca en el camino
+// crítico de una venta/comanda (misma regla de oro que el asistente).
+// ---------------------------------------------------------------------------
+
+const VISION_MODEL: &str = "llava:7b";
+
+const INVOICE_PROMPT: &str = "Analyze this supplier invoice (factura) photographed in a Mexican \
+small business. Extract every product line item and respond ONLY with valid JSON — no \
+explanation, no markdown:\n\
+{\n  \"supplier\": \"supplier/company name if visible, or null\",\n  \"lines\": [\n    \
+{ \"name\": \"product name as written\", \"qty\": quantity_as_number, \"unitCost\": \
+unit_cost_in_mexican_pesos_as_number }\n  ]\n}\n\
+Skip lines you cannot read with reasonable confidence. If you cannot read the invoice at all, \
+return {\"supplier\": null, \"lines\": []}.";
+
+/// Extrae proveedor + líneas de una foto de factura. Devuelve `lines: []` si
+/// el modelo no pudo leer nada (mismo comportamiento tolerante que TS).
+pub async fn extract_invoice_from_image(http: &reqwest::Client, image_base64: &str) -> Result<Value, AiError> {
+    let messages = vec![json!({
+        "role": "user",
+        "content": INVOICE_PROMPT,
+        "images": [image_base64],
+    })];
+
+    let body = json!({ "model": VISION_MODEL, "messages": messages, "stream": false });
+    let resp = http
+        .post(OLLAMA_URL)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| AiError(format!("no se pudo contactar a Ollama: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(AiError(format!("Ollama respondió {}", resp.status())));
+    }
+    let data: Value = resp.json().await.map_err(|e| AiError(e.to_string()))?;
+    let text = data["message"]["content"].as_str().unwrap_or("").trim().to_string();
+
+    let Some(start) = text.find('{') else {
+        return Ok(json!({ "supplier": null, "lines": [] }));
+    };
+    let Some(end) = text.rfind('}') else {
+        return Ok(json!({ "supplier": null, "lines": [] }));
+    };
+    let json_slice = &text[start..=end];
+
+    let Ok(raw): std::result::Result<Value, _> = serde_json::from_str(json_slice) else {
+        return Ok(json!({ "supplier": null, "lines": [] }));
+    };
+
+    let lines: Vec<Value> = raw["lines"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|l| {
+            let name = l.get("name")?.as_str()?.trim().to_string();
+            let qty = l.get("qty")?.as_f64().unwrap_or(0.0);
+            let unit_cost = l.get("unitCost").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            if name.is_empty() || qty <= 0.0 {
+                return None;
+            }
+            Some(json!({ "name": name, "qty": qty, "unitCost": unit_cost }))
+        })
+        .collect();
+
+    Ok(json!({ "supplier": raw.get("supplier").and_then(|v| v.as_str()), "lines": lines }))
+}

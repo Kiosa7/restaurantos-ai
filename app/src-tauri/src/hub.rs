@@ -152,6 +152,11 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/ai/chat", post(post_ai_chat))
         .route("/cfdi/generate", post(post_cfdi_generate))
         .route("/cfdi/by-sale/:sale_id", get(get_cfdi_by_sale))
+        .route("/customers", get(get_customers).post(post_customer))
+        .route("/promotions", get(get_promotions).post(post_promotion))
+        .route("/suppliers", get(get_suppliers).post(post_supplier))
+        .route("/purchases", post(post_purchase))
+        .route("/purchases/ocr", post(post_purchase_ocr))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -176,6 +181,64 @@ async fn post_cfdi_generate(State(state): State<Arc<HubState>>, Json(payload): J
 async fn get_cfdi_by_sale(State(state): State<Arc<HubState>>, Path(sale_id): Path<String>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
     Json(commands::get_cfdi_document(&conn, &sale_id))
+}
+
+async fn get_customers(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::commerce::list_customers(&conn))
+}
+
+async fn post_customer(State(state): State<Arc<HubState>>, Json(payload): Json<crate::commerce::CreateCustomerPayload>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match crate::commerce::create_customer(&conn, &payload) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn get_promotions(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::commerce::list_promotions(&conn))
+}
+
+async fn post_promotion(State(state): State<Arc<HubState>>, Json(payload): Json<crate::commerce::CreatePromotionPayload>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match crate::commerce::create_promotion(&conn, &payload) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn get_suppliers(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::commerce::list_suppliers(&conn))
+}
+
+async fn post_supplier(State(state): State<Arc<HubState>>, Json(payload): Json<crate::commerce::CreateSupplierPayload>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match crate::commerce::create_supplier(&conn, &payload) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn post_purchase(State(state): State<Arc<HubState>>, Json(payload): Json<crate::commerce::CreatePurchasePayload>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match crate::commerce::create_purchase(&conn, &payload) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn post_purchase_ocr(State(state): State<Arc<HubState>>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    let Some(image_base64) = body.get("imageBase64").and_then(|v| v.as_str()) else {
+        return domain_error_response("falta imageBase64".into());
+    };
+    // Sin lock de BD durante el `.await` — es una llamada de red pura (30-60s).
+    match crate::ai::extract_invoice_from_image(&state.http, image_base64).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (axum::http::StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": e.0 }))).into_response(),
+    }
 }
 
 async fn post_pair_generate(State(state): State<Arc<HubState>>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {

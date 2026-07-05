@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod backup;
 pub mod commands;
+pub mod commerce;
 pub mod db;
 pub mod hub;
 pub mod seed;
