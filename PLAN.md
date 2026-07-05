@@ -403,14 +403,59 @@ Con (2)-(9) cerrados (complemento de pago ⛔ transitivamente bloqueado por
 (1)), **Fase 7 queda cerrada salvo el timbrado real** (⛔, bloqueado desde
 Fase 2 por falta de cuenta de PAC).
 
-## 10.2 Fase 8 (Enterprise) — sin empezar
+## 10.2 Fase 8 (Enterprise)
 
-No se tocó código de Fase 8 en esta sesión. Recordatorio de alcance (§7,
-§9): multi-sucursal (el protocolo de sync HLC/outbox de pos-inteligente ya
-está validado por simulación y se reserva exactamente para esto, no hace
-falta re-diseñarlo), plugins/marketplace (el modelo ya está documented en
-`docs/permisos-plugins.md` desde Fase 2, falta implementarlo), auditoría
-avanzada, franquicias, API pública, visión avanzada (OCR/cámara cenital).
+1. ✅ **Multi-sucursal (sync HLC/outbox)** — puerto real del protocolo de
+   pos-inteligente (`docs/sync/protocolo.md`, antes solo validado por
+   simulación) sobre el esquema que ya traía 0001 (`outbox`, `sync_state`,
+   `sync_conflicts`, `audit_log`) sin usar hasta ahora. Módulo nuevo
+   `sync.rs`: `Hlc` (wall_ms, counter, node — orden total vía
+   `derive(Ord)`, exactamente el algoritmo del protocolo §3),
+   `HlcClock` (reloj por proceso, `next_local`/`observe_remote`),
+   `enqueue_sale`/`enqueue_inventory_movement`/`enqueue_customer` (escriben
+   al `outbox` en la MISMA transacción que el cambio de dominio), y
+   `pull`/`push` (el servidor de `GET /sync/pull` y `POST /sync/push`).
+   Las 3 estrategias de resolución del protocolo §5, las 3 reales, no solo
+   documentadas: `sale` y `inventory_movement` son append-only/CRDT por
+   suma de deltas (el trigger de 0010 recalcula `inventory.qty` solo,
+   converge sin importar el orden); `customer` es LWW — DECISIÓN AUTÓNOMA:
+   simplificado a LWW **por fila** en vez de por-campo (el protocolo
+   original hacía por-campo); el valor perdedor SIEMPRE se traza en
+   `audit_log` (acción `sync.lww_overwrite`), nunca se descarta en
+   silencio, igual que exige el protocolo.
+   DECISIÓN AUTÓNOMA (alcance v1): todos los nodos comparten el mismo
+   catálogo sembrado (mismo `tenant_id`/`location_id`/productos/empleados);
+   lo que de verdad sincroniza son los hechos transaccionales (ventas,
+   movimientos de inventario) y el CRM (clientes) — federar un catálogo
+   realmente distinto por sucursal (productos/precios propios) es un paso
+   posterior, no bloqueante para probar que el PROTOCOLO de sync converge.
+   Un hub de RestaurantOS ahora puede jugar el rol de "sucursal" del
+   protocolo original; el rol de "nube" lo puede jugar cualquier proceso
+   que hable el mismo `push`/`pull` HTTP — incluyendo otro hub, que es
+   exactamente cómo se verificó (ver bitácora): dos binarios reales
+   (puertos 5190/5191, `RESTAURANTOS_NODE_ID`/`RESTAURANTOS_HUB_PORT`
+   nuevos para poder correr dos hubs en la misma máquina) sincronizando
+   entre sí de verdad, no una simulación en memoria como en pos-inteligente.
+   Verificado contra los binarios reales (2026-07-05).
+2. **Plugins/marketplace** — el modelo ya está documentado en
+   `docs/permisos-plugins.md` desde Fase 2; implementar el registro
+   enable/disable de los módulos de Fase 7 (dogfooding del propio modelo:
+   "mesero/KDS/caja son, arquitectónicamente, plugins del núcleo"). Un
+   runtime de plugins de terceros fuera de proceso (con la frontera dura
+   que describe el doc) es alcance posterior — no se necesita para que el
+   valor real de "un restaurante que no hace delivery no ve ese panel"
+   exista hoy.
+3. **Auditoría avanzada** — `audit_log` (0001, hash-encadenado) ya se
+   usa de verdad desde el punto 1 (`sync.lww_overwrite`); falta una UI
+   dedicada para consultarlo (no solo que exista la tabla).
+4. **API pública** — exponer un subconjunto de los endpoints ya existentes
+   bajo autenticación por API key para integraciones de terceros
+   (contabilidad, agregadores de delivery reales).
+5. **Franquicias, visión avanzada** — sin empezar; visión avanzada
+   (OCR/cámara cenital) depende de hardware que no existe en esta máquina
+   (cámara cenital real), mismo patrón de bloqueo que la impresora térmica
+   (§11.3) — evaluar si aplica marcar ⛔ formalmente al llegar a ese punto
+   en vez de construir en el vacío.
 
 ## 11. Supuestos pendientes de confirmar con el dueño
 
@@ -477,11 +522,11 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   que solo da un timbrado real) — ninguno de los dos es un hueco de
   diseño, son dependencias externas documentadas. Fase 7 no tiene más
   trabajo pendiente que no dependa de esos dos bloqueos (2026-07-05).
-- 🟡 Fase 8 Enterprise — ARRANCANDO: sin código todavía en esta sesión, ver
-  §9 y §10.2 para el alcance (multi-sucursal reusando el protocolo
-  HLC/outbox ya validado en pos-inteligente, plugins/marketplace sobre
-  `docs/permisos-plugins.md`, auditoría avanzada, franquicias, API
-  pública, visión avanzada).
+- 🟡 Fase 8 Enterprise — AVANZANDO: multi-sucursal (sync HLC/outbox) ✅,
+  puerto real (no simulado) del protocolo de pos-inteligente, verificado
+  con dos binarios reales sincronizando entre sí. Faltan plugins/
+  marketplace, auditoría avanzada (UI), API pública, franquicias y visión
+  avanzada — ver §10.2 (2026-07-05).
 
 ## Bitácora
 
@@ -1102,3 +1147,88 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     validado en pos-inteligente, plugins/marketplace sobre
     `docs/permisos-plugins.md`, auditoría avanzada, franquicias, API
     pública, visión avanzada).
+- 2026-07-05: Fase 8 (Enterprise) — multi-sucursal (sync HLC/outbox), primer
+  módulo real de la fase.
+  - **Contexto**: el esquema ya traía desde 0001 (heredado de
+    pos-inteligente) toda la infraestructura de sync — `outbox`,
+    `sync_state`, `sync_conflicts`, `audit_log` — sin que ningún código la
+    usara todavía (confirmado por grep antes de empezar). El protocolo
+    completo (HLC, outbox transaccional, 3 estrategias de resolución por
+    tipo de agregado) ya estaba diseñado y validado por SIMULACIÓN en
+    pos-inteligente (`docs/sync/protocolo.md`), pero nunca implementado
+    contra un servidor real (su propio §12 dice "falta la implementación
+    del hub"). Esta sesión lo implementa y lo verifica de verdad.
+  - **DECISIÓN AUTÓNOMA (identidad de nodo configurable)**: `seed::NODE`
+    era una constante fija (`"t1:l1:hub"`); para poder correr DOS hubs
+    reales en la misma máquina con identidad de nodo distinta (necesario
+    para desempate determinista de HLC), se volvió `seed::node()` —
+    función que lee `RESTAURANTOS_NODE_ID` una sola vez (`OnceLock`), con
+    el mismo default de antes si no se define. Refactor mecánico (~30
+    call sites entre `seed.rs`/`commands.rs`/`commerce.rs`), sin cambio de
+    comportamiento cuando la env var no está definida — confirmado por
+    los 14 tests previos siguiendo pasando igual tras el cambio.
+  - **`sync.rs` (nuevo)**: `Hlc{wall,counter,node}` con orden total por
+    `derive(Ord)` (exactamente el algoritmo del protocolo §3: comparar
+    lexicográficamente); `HlcClock` con `next_local`/`observe_remote`
+    (monotonía garantizada aunque el remoto traiga un wall más
+    adelantado); `enqueue_sale`/`enqueue_inventory_movement`/
+    `enqueue_customer` escriben al `outbox` en la MISMA transacción que el
+    cambio de dominio (se llaman desde los handlers HTTP/WS de
+    `hub.rs`, justo después de que `commands.rs`/`commerce.rs` ya
+    insertaron la fila real, todavía con el mismo `conn` bloqueado);
+    `pull`/`push` son el servidor de `GET /sync/pull` (cursor incremental
+    por HLC, reanudable) y `POST /sync/push` (idempotente por
+    `aggregate_id` ya existente localmente).
+  - **Las 3 estrategias del protocolo §5, las 3 reales**:
+    - `sale`/`inventory_movement`: append-only / CRDT por suma de deltas.
+      Aplicar un movimiento remoto es un simple INSERT (si el id no existe
+      ya) — el trigger de 0010 recalcula `inventory.qty` solo, así que el
+      stock converge sin importar en qué orden lleguen los movimientos de
+      distintas sucursales. Verificado explícitamente: dos nodos con el
+      mismo movimiento aplicado dos veces (reenvío) NO duplican el
+      descuento (idempotencia real, no solo "en memoria").
+    - `customer`: LWW. DECISIÓN AUTÓNOMA: simplificado a LWW **por fila**
+      (el protocolo original de pos-inteligente lo diseñaba por-campo,
+      fusionando cambios a campos distintos del mismo registro); documentado
+      como limitación v1 — dos ediciones concurrentes a campos DISTINTOS
+      del mismo cliente hacen que una pise a la otra en vez de fusionarse.
+      Lo que SÍ se preservó del protocolo: el valor perdedor nunca se
+      descarta en silencio — se escribe a `audit_log` (acción
+      `sync.lww_overwrite`, con el before/after completos), reutilizando
+      la cadena de hash que ya existía para eso (mismo patrón que la
+      cadena de `sales`).
+  - **DECISIÓN AUTÓNOMA (alcance v1 de "multi-sucursal")**: todos los
+    nodos de esta implementación comparten el mismo catálogo sembrado
+    (mismo `tenant_id`/`location_id`/productos/empleados/mesas). Lo que
+    de verdad viaja por el protocolo son los HECHOS transaccionales
+    (ventas, movimientos de inventario) y el CRM (clientes) — federar un
+    catálogo realmente distinto por sucursal (productos/precios propios
+    por locación) es un paso posterior de modelado de datos, no bloqueante
+    para demostrar que el PROTOCOLO DE SYNC EN SÍ converge correctamente,
+    que es el riesgo que este punto de la Fase 8 existe para mitigar.
+  - **Verificación — más estricta que la del propio pos-inteligente**: ahí
+    el protocolo se validó con `docs/sync/sync-sim.mjs`, una simulación en
+    memoria de 2 nodos. Aquí se verificó con:
+    - `cargo test`: nuevo `sync_multi_sucursal_converge_por_estrategia_de_agregado`
+      (dos BDs en memoria con relojes HLC de nodo distinto, intercambian
+      outbox real vía `pull()`/`push()`, verifica las 3 estrategias +
+      idempotencia + convergencia de LWW con conflicto real). 15/15 tests
+      verdes.
+    - **Contra DOS BINARIOS REALES simultáneos**: se agregaron
+      `RESTAURANTOS_HUB_PORT` (puerto configurable, antes fijo en 5190) y
+      se usó `RESTAURANTOS_NODE_ID`/`RESTAURANTOS_DB_PATH` para levantar
+      "sucursal A" (puerto 5190) y "sucursal B" (puerto 5191) como dos
+      procesos `app.exe` independientes con sus propios `.db`. Un script
+      Node relayó eventos reales por HTTP entre ambos (el rol que jugaría
+      una nube real, pero contra hubs reales, no un mock): venta +
+      compra creadas en A, sincronizadas hacia B (aparecen, son
+      facturables ahí); reenviar el mismo lote a B es no-op puro;
+      cliente creado en B, sincronizado hacia A. 11/11 aserciones
+      pasaron. Ambos procesos detenidos limpiamente y sus `.db` borradas
+      al terminar.
+  - **Con esto, el punto de mayor riesgo/incertidumbre de Fase 8 (¿el
+    protocolo de sync realmente converge fuera de una simulación?) queda
+    resuelto**: sí, contra hubs reales. Sigue pendiente: plugins/
+    marketplace, auditoría avanzada (UI sobre el `audit_log` que ya se usa
+    de verdad desde este punto), API pública, franquicias, visión
+    avanzada — ver §10.2 para el desglose y el orden sugerido.

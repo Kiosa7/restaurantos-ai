@@ -32,7 +32,7 @@ pub fn create_customer(conn: &Connection, payload: &CreateCustomerPayload) -> Re
     conn.execute(
         "INSERT INTO customers (id,tenant_id,name,phone,email,tax_id,loyalty_points,credit_limit,balance,created_at,updated_at,origin_node)
          VALUES (?1,?2,?3,?4,?5,?6,0,0,0,?7,?7,?8)",
-        params![id, seed::TENANT, payload.name, payload.phone, payload.email, payload.tax_id, now, seed::NODE],
+        params![id, seed::TENANT, payload.name, payload.phone, payload.email, payload.tax_id, now, seed::node()],
     ).map_err(|e| err(e.to_string()))?;
     Ok(json!({ "customerId": id }))
 }
@@ -136,7 +136,7 @@ pub fn create_promotion(conn: &Connection, payload: &CreatePromotionPayload) -> 
     conn.execute(
         "INSERT INTO promotions (id,tenant_id,name,type,rules_json,priority,stackable,is_active,created_at,updated_at,origin_node)
          VALUES (?1,?2,?3,'percent_off',?4,?5,0,1,?6,?6,?7)",
-        params![id, seed::TENANT, payload.name, rules.to_string(), payload.priority, now, seed::NODE],
+        params![id, seed::TENANT, payload.name, rules.to_string(), payload.priority, now, seed::node()],
     ).map_err(|e| err(e.to_string()))?;
     Ok(json!({ "promotionId": id }))
 }
@@ -180,7 +180,7 @@ pub fn create_supplier(conn: &Connection, payload: &CreateSupplierPayload) -> Re
     conn.execute(
         "INSERT INTO suppliers (id,tenant_id,name,lead_time_days,balance,created_at,updated_at,origin_node)
          VALUES (?1,?2,?3,?4,0,?5,?5,?6)",
-        params![id, seed::TENANT, payload.name, payload.lead_time_days, now, seed::NODE],
+        params![id, seed::TENANT, payload.name, payload.lead_time_days, now, seed::node()],
     ).map_err(|e| err(e.to_string()))?;
     Ok(json!({ "supplierId": id }))
 }
@@ -232,9 +232,10 @@ pub fn create_purchase(conn: &Connection, payload: &CreatePurchasePayload) -> Re
     conn.execute(
         "INSERT INTO purchases (id,tenant_id,location_id,supplier_id,employee_id,folio,datetime,subtotal,tax_total,total,status,created_at,updated_at,origin_node)
          VALUES (?1,?2,?3,?4,?5,?6,?7,0,0,0,'received',?7,?7,?8)",
-        params![purchase_id, seed::TENANT, seed::LOCATION, payload.supplier_id, seed::EMPLOYEE_CAJERO, folio, now, seed::NODE],
+        params![purchase_id, seed::TENANT, seed::LOCATION, payload.supplier_id, seed::EMPLOYEE_CAJERO, folio, now, seed::node()],
     ).map_err(|e| err(e.to_string()))?;
 
+    let mut inventory_movement_ids = Vec::new();
     for item in &payload.items {
         let name: String = conn
             .query_row("SELECT name FROM products WHERE id = ?1", params![item.product_id], |r| r.get(0))
@@ -245,14 +246,16 @@ pub fn create_purchase(conn: &Connection, payload: &CreatePurchasePayload) -> Re
         conn.execute(
             "INSERT INTO purchase_items (id,purchase_id,product_id,name_snapshot,qty,unit_cost,line_total,created_at,origin_node)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            params![uuid7(), purchase_id, item.product_id, name, item.qty, item.unit_cost_cents, line_total, now, seed::NODE],
+            params![uuid7(), purchase_id, item.product_id, name, item.qty, item.unit_cost_cents, line_total, now, seed::node()],
         ).map_err(|e| err(e.to_string()))?;
 
+        let movement_id = uuid7();
         conn.execute(
             "INSERT INTO inventory_movements (id,tenant_id,location_id,product_id,type,qty_delta,unit_cost,ref_doc,created_at,origin_node)
              VALUES (?1,?2,?3,?4,'purchase',?5,?6,?7,?8,?9)",
-            params![uuid7(), seed::TENANT, seed::LOCATION, item.product_id, item.qty, item.unit_cost_cents, format!("purchase:{purchase_id}"), now, seed::NODE],
+            params![movement_id, seed::TENANT, seed::LOCATION, item.product_id, item.qty, item.unit_cost_cents, format!("purchase:{purchase_id}"), now, seed::node()],
         ).map_err(|e| err(e.to_string()))?;
+        inventory_movement_ids.push(movement_id);
     }
 
     conn.execute(
@@ -260,7 +263,7 @@ pub fn create_purchase(conn: &Connection, payload: &CreatePurchasePayload) -> Re
         params![subtotal, now, purchase_id],
     ).map_err(|e| err(e.to_string()))?;
 
-    Ok(json!({ "purchaseId": purchase_id, "folio": folio, "totalCents": subtotal }))
+    Ok(json!({ "purchaseId": purchase_id, "folio": folio, "totalCents": subtotal, "inventoryMovementIds": inventory_movement_ids }))
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +290,7 @@ pub fn create_reservation(conn: &Connection, payload: &CreateReservationPayload)
     conn.execute(
         "INSERT INTO reservations (id,tenant_id,location_id,customer_name,customer_phone,party_size,reserved_at,status,notes,created_at,updated_at,origin_node)
          VALUES (?1,?2,?3,?4,?5,?6,?7,'confirmada',?8,?9,?9,?10)",
-        params![id, seed::TENANT, seed::LOCATION, payload.customer_name, payload.customer_phone, payload.party_size, payload.reserved_at, payload.notes, now, seed::NODE],
+        params![id, seed::TENANT, seed::LOCATION, payload.customer_name, payload.customer_phone, payload.party_size, payload.reserved_at, payload.notes, now, seed::node()],
     ).map_err(|e| err(e.to_string()))?;
     Ok(json!({ "reservationId": id }))
 }
@@ -363,7 +366,7 @@ pub fn create_delivery_order(conn: &Connection, payload: &CreateDeliveryOrderPay
     conn.execute(
         "INSERT INTO delivery_orders (id,tenant_id,location_id,order_id,channel,customer_name,customer_phone,address,status,created_at,updated_at,origin_node)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'recibido',?9,?9,?10)",
-        params![id, seed::TENANT, seed::LOCATION, order_id, payload.channel, payload.customer_name, payload.customer_phone, payload.address, now, seed::NODE],
+        params![id, seed::TENANT, seed::LOCATION, order_id, payload.channel, payload.customer_name, payload.customer_phone, payload.address, now, seed::node()],
     ).map_err(|e| err(e.to_string()))?;
 
     Ok(json!({ "deliveryOrderId": id, "orderId": order_id, "channel": payload.channel }))

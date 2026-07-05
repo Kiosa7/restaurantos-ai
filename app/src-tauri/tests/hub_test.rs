@@ -563,3 +563,99 @@ fn pedido_a_domicilio_reutiliza_el_pipeline_de_comandas() {
     let sale = handle_checkout(&conn, &checkout_payload).unwrap();
     assert_eq!(sale["totalCents"], 9000 * 3);
 }
+
+/// Fase 8: protocolo de sync multi-sucursal (puerto del protocolo validado
+/// en pos-inteligente, docs/sync/protocolo.md) — dos "sucursales" (dos BDs
+/// en memoria con relojes HLC de nodo distinto) intercambian outbox real
+/// vía pull()/push() y convergen: venta (append-only), movimiento de
+/// inventario (CRDT por suma de deltas) y cliente (LWW por fila, con el
+/// valor perdedor trazado en audit_log, nunca descartado en silencio).
+#[test]
+fn sync_multi_sucursal_converge_por_estrategia_de_agregado() {
+    use app_lib::commands::*;
+    use app_lib::sync::{self, HlcClock};
+
+    let sucursal_a = fresh_seeded_db();
+    let sucursal_b = fresh_seeded_db();
+    let clock_a = HlcClock::new("t1:l1:sucursal-a");
+    let clock_b = HlcClock::new("t1:l1:sucursal-b");
+
+    // --- A vende (append-only) y descuenta inventario (CRDT por delta) ---
+    let payload: NuevaComandaPayload = serde_json::from_value(json!({
+        "tableNumber": 5, "items": [{ "productId": "mi_tacos_pastor", "cantidad": 2 }]
+    })).unwrap();
+    let order = handle_nueva_comanda(&sucursal_a, &payload).unwrap();
+    let checkout_payload: CheckoutPayload = serde_json::from_value(json!({
+        "orderId": order["orderId"], "paymentMethod": "efectivo"
+    })).unwrap();
+    let sale = handle_checkout(&sucursal_a, &checkout_payload).unwrap();
+    let sale_id = sale["saleIds"][0].as_str().unwrap().to_string();
+    sync::enqueue_sale(&sucursal_a, &clock_a, &sale_id);
+
+    let movement_id = uuid7();
+    sucursal_a.execute(
+        "INSERT INTO inventory_movements (id,tenant_id,location_id,product_id,type,qty_delta,created_at,origin_node) VALUES (?1,'t1','l1','insumo-cebolla','adjustment',-5.0,?2,'t1:l1:sucursal-a')",
+        rusqlite::params![movement_id, now_ms()],
+    ).unwrap();
+    sync::enqueue_inventory_movement(&sucursal_a, &clock_a, &movement_id);
+
+    let stock_antes_b: f64 = sucursal_b.query_row("SELECT qty FROM inventory WHERE product_id='insumo-cebolla'", [], |r| r.get(0)).unwrap();
+
+    // --- Pull en A, push en B: B debe converger ---
+    let pulled = sync::pull(&sucursal_a, "", 500);
+    let events: Vec<sync::SyncEvent> = serde_json::from_value(pulled["events"].clone()).unwrap();
+    assert_eq!(events.len(), 2, "la venta y el movimiento quedaron en el outbox de A");
+
+    let push_result = sync::push(&sucursal_b, &clock_b, &events);
+    assert_eq!(push_result["accepted"].as_array().unwrap().len(), 2, "B acepta ambos eventos la primera vez");
+
+    let sale_en_b: i64 = sucursal_b.query_row("SELECT COUNT(*) FROM sales WHERE id = ?1", rusqlite::params![sale_id], |r| r.get(0)).unwrap();
+    assert_eq!(sale_en_b, 1, "la venta se materializó en B (append-only)");
+
+    let stock_despues_b: f64 = sucursal_b.query_row("SELECT qty FROM inventory WHERE product_id='insumo-cebolla'", [], |r| r.get(0)).unwrap();
+    assert!((stock_despues_b - (stock_antes_b - 5.0)).abs() < 1e-9, "el stock de B convergió por suma de deltas (CRDT)");
+
+    // Reenviar el mismo lote: idempotente, no duplica ni vuelve a descontar.
+    let push_again = sync::push(&sucursal_b, &clock_b, &events);
+    assert_eq!(push_again["duplicates"].as_array().unwrap().len(), 2, "reenviar el mismo batch es un no-op");
+    let stock_tras_reenvio: f64 = sucursal_b.query_row("SELECT qty FROM inventory WHERE product_id='insumo-cebolla'", [], |r| r.get(0)).unwrap();
+    assert_eq!(stock_despues_b, stock_tras_reenvio, "reenviar no vuelve a aplicar el movimiento");
+
+    // --- Cliente: conflicto real de catálogo, LWW por fila ---
+    use app_lib::commerce::{create_customer, CreateCustomerPayload};
+    let created = create_customer(&sucursal_a, &CreateCustomerPayload {
+        name: "Cliente Original".into(), phone: None, email: None, tax_id: None,
+    }).unwrap();
+    let customer_id = created["customerId"].as_str().unwrap().to_string();
+    sync::enqueue_customer(&sucursal_a, &clock_a, &customer_id);
+
+    // Lo llevamos a B primero (para que exista localmente con el nombre original).
+    let pulled2 = sync::pull(&sucursal_a, &events.last().unwrap().hlc, 500);
+    let events2: Vec<sync::SyncEvent> = serde_json::from_value(pulled2["events"].clone()).unwrap();
+    sync::push(&sucursal_b, &clock_b, &events2);
+
+    // A y B editan el MISMO cliente concurrentemente, con HLCs distintos.
+    sucursal_a.execute("UPDATE customers SET name = 'Editado en A' WHERE id = ?1", rusqlite::params![customer_id]).unwrap();
+    sync::enqueue_customer(&sucursal_a, &clock_a, &customer_id);
+    sucursal_b.execute("UPDATE customers SET name = 'Editado en B' WHERE id = ?1", rusqlite::params![customer_id]).unwrap();
+    sync::enqueue_customer(&sucursal_b, &clock_b, &customer_id);
+
+    // Se intercambian esos 2 eventos entre sí.
+    let a_events: Vec<sync::SyncEvent> = {
+        let p = sync::pull(&sucursal_a, &events2.last().map(|e| e.hlc.clone()).unwrap_or_default(), 500);
+        serde_json::from_value(p["events"].clone()).unwrap()
+    };
+    let b_events: Vec<sync::SyncEvent> = {
+        let p = sync::pull(&sucursal_b, &events2.last().map(|e| e.hlc.clone()).unwrap_or_default(), 500);
+        serde_json::from_value(p["events"].clone()).unwrap()
+    };
+    sync::push(&sucursal_b, &clock_b, &a_events);
+    sync::push(&sucursal_a, &clock_a, &b_events);
+
+    let nombre_final_a: String = sucursal_a.query_row("SELECT name FROM customers WHERE id = ?1", rusqlite::params![customer_id], |r| r.get(0)).unwrap();
+    let nombre_final_b: String = sucursal_b.query_row("SELECT name FROM customers WHERE id = ?1", rusqlite::params![customer_id], |r| r.get(0)).unwrap();
+    assert_eq!(nombre_final_a, nombre_final_b, "LWW converge: ambos nodos terminan con el mismo valor (el de mayor HLC)");
+
+    let conflictos_a: i64 = sucursal_a.query_row("SELECT COUNT(*) FROM audit_log WHERE action = 'sync.lww_overwrite'", [], |r| r.get(0)).unwrap();
+    assert!(conflictos_a >= 1, "el valor perdedor del LWW queda trazado en audit_log, nunca se descarta en silencio");
+}

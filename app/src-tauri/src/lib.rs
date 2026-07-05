@@ -6,13 +6,18 @@ pub mod db;
 pub mod hub;
 pub mod reports;
 pub mod seed;
+pub mod sync;
 
 use std::path::PathBuf;
 
-/// Puerto del hub LAN (PLAN.md §12: 5190, evita 3000 y 5180 ocupados por
-/// otras apps del usuario). Escucha en 0.0.0.0 para que tablets/KDS en la
-/// misma red lo alcancen — no solo localhost.
-const HUB_PORT: u16 = 5190;
+/// Puerto del hub LAN (PLAN.md §12: 5190 por default, evita 3000 y 5180
+/// ocupados por otras apps del usuario). Escucha en 0.0.0.0 para que
+/// tablets/KDS en la misma red lo alcancen — no solo localhost.
+/// Configurable (Fase 8): correr dos hubs (dos "sucursales") en la misma
+/// máquina para probar sync multi-sucursal necesita puertos distintos.
+fn hub_port() -> u16 {
+    std::env::var("RESTAURANTOS_HUB_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(5190)
+}
 
 fn spawn_hub_server() {
     std::thread::spawn(|| {
@@ -41,7 +46,7 @@ fn spawn_hub_server() {
             let pwa_dir: Option<PathBuf> = std::env::var("RESTAURANTOS_PWA_DIR").ok().map(PathBuf::from);
             let router = hub::router(state, pwa_dir.as_deref().and_then(|p| p.to_str()));
 
-            let addr = format!("0.0.0.0:{HUB_PORT}");
+            let addr = format!("0.0.0.0:{}", hub_port());
             match tokio::net::TcpListener::bind(&addr).await {
                 Ok(listener) => {
                     log::info!("hub LAN escuchando en {addr}");

@@ -99,7 +99,7 @@ pub fn handle_nueva_comanda(conn: &Connection, payload: &NuevaComandaPayload) ->
             conn.execute(
                 "INSERT INTO orders (id,tenant_id,location_id,table_id,employee_id,guests,status,opened_at,created_at,updated_at,origin_node)
                  VALUES (?1,?2,?3,?4,?5,1,'abierta',?6,?6,?6,?7)",
-                params![id, seed::TENANT, seed::LOCATION, table_id, seed::EMPLOYEE_MESERO, now, seed::NODE],
+                params![id, seed::TENANT, seed::LOCATION, table_id, seed::EMPLOYEE_MESERO, now, seed::node()],
             ).unwrap();
             id
         });
@@ -120,7 +120,7 @@ pub fn handle_nueva_comanda(conn: &Connection, payload: &NuevaComandaPayload) ->
         conn.execute(
             "INSERT INTO order_items (id,order_id,product_id,name_snapshot,course,qty,unit_price,notes,status,sent_at,created_at,updated_at,origin_node)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'pendiente',?9,?9,?9,?10)",
-            params![order_item_id, order_id, item.product_id, name, course, item.cantidad, price_cents, item.notas, now, seed::NODE],
+            params![order_item_id, order_id, item.product_id, name, course, item.cantidad, price_cents, item.notas, now, seed::node()],
         ).map_err(|e| err(e.to_string()))?;
 
         let mut modificadores_json = Vec::new();
@@ -189,6 +189,7 @@ pub fn handle_bump_platillo(conn: &Connection, payload: &BumpPlatilloPayload) ->
         )
         .map_err(|e| err(e.to_string()))?;
 
+    let mut inventory_movement_ids = Vec::new();
     if payload.next_status == "en_preparacion" {
         let recipe_id: Option<String> = conn
             .query_row("SELECT id FROM recipes WHERE product_id = ?1", params![product_id], |r| r.get(0))
@@ -206,11 +207,13 @@ pub fn handle_bump_platillo(conn: &Connection, payload: &BumpPlatilloPayload) ->
                 .collect();
             for (ingredient_id, recipe_qty) in rows {
                 let delta = -(recipe_qty * qty);
+                let movement_id = uuid7();
                 conn.execute(
                     "INSERT INTO inventory_movements (id,tenant_id,location_id,product_id,type,qty_delta,created_at,origin_node)
                      VALUES (?1,?2,?3,?4,'sale',?5,?6,?7)",
-                    params![uuid7(), seed::TENANT, seed::LOCATION, ingredient_id, delta, now, seed::NODE],
+                    params![movement_id, seed::TENANT, seed::LOCATION, ingredient_id, delta, now, seed::node()],
                 ).map_err(|e| err(e.to_string()))?;
+                inventory_movement_ids.push(movement_id);
             }
         }
     }
@@ -221,13 +224,14 @@ pub fn handle_bump_platillo(conn: &Connection, payload: &BumpPlatilloPayload) ->
     ).map_err(|e| err(e.to_string()))?;
     conn.execute(
         "INSERT INTO order_item_events (id,order_item_id,status,at,employee_id,created_at,origin_node) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        params![uuid7(), payload.order_item_id, payload.next_status, now, seed::EMPLOYEE_COCINA, now, seed::NODE],
+        params![uuid7(), payload.order_item_id, payload.next_status, now, seed::EMPLOYEE_COCINA, now, seed::node()],
     ).map_err(|e| err(e.to_string()))?;
 
     Ok(json!({
         "orderItemId": payload.order_item_id,
         "nextStatus": payload.next_status,
         "mesa": table_number,
+        "inventoryMovementIds": inventory_movement_ids,
     }))
 }
 
@@ -470,7 +474,7 @@ pub fn handle_checkout(conn: &Connection, payload: &CheckoutPayload) -> Result<V
         conn.execute(
             "INSERT INTO sales (id,tenant_id,location_id,register_id,employee_id,customer_id,folio,datetime,subtotal,discount_total,tax_total,total,payment_status,status,seq,prev_hash,hash,created_at,origin_node)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'paid','completed',?13,?14,?15,?16,?17)",
-            params![sale_id, seed::TENANT, seed::LOCATION, seed::REGISTER, seed::EMPLOYEE_CAJERO, payload.customer_id, folio, now, subtotal, discount_cents, tax, monto, seq, prev_hash, hash, now, seed::NODE],
+            params![sale_id, seed::TENANT, seed::LOCATION, seed::REGISTER, seed::EMPLOYEE_CAJERO, payload.customer_id, folio, now, subtotal, discount_cents, tax, monto, seq, prev_hash, hash, now, seed::node()],
         ).map_err(|e| err(e.to_string()))?;
 
         if partes == 1 {
@@ -481,7 +485,7 @@ pub fn handle_checkout(conn: &Connection, payload: &CheckoutPayload) -> Result<V
                     params![
                         uuid7(), sale_id, item["productId"].as_str().unwrap(), item["nombre"].as_str().unwrap(),
                         item["unitPriceCents"].as_i64().unwrap(), item["cantidad"].as_f64().unwrap(),
-                        item["lineTotalCents"].as_i64().unwrap(), now, seed::NODE,
+                        item["lineTotalCents"].as_i64().unwrap(), now, seed::node(),
                     ],
                 ).map_err(|e| err(e.to_string()))?;
             }
@@ -489,13 +493,13 @@ pub fn handle_checkout(conn: &Connection, payload: &CheckoutPayload) -> Result<V
             conn.execute(
                 "INSERT INTO sale_items (id,sale_id,name_snapshot,unit_price,qty,line_total,created_at,origin_node)
                  VALUES (?1,?2,?3,?4,1,?4,?5,?6)",
-                params![uuid7(), sale_id, format!("División de cuenta ({}/{})", i + 1, partes), monto, now, seed::NODE],
+                params![uuid7(), sale_id, format!("División de cuenta ({}/{})", i + 1, partes), monto, now, seed::node()],
             ).map_err(|e| err(e.to_string()))?;
         }
 
         conn.execute(
             "INSERT INTO payments (id,sale_id,method,amount,created_at,origin_node) VALUES (?1,?2,?3,?4,?5,?6)",
-            params![uuid7(), sale_id, normalize_payment_method(&payload.payment_method), monto, now, seed::NODE],
+            params![uuid7(), sale_id, normalize_payment_method(&payload.payment_method), monto, now, seed::node()],
         ).map_err(|e| err(e.to_string()))?;
         conn.execute(
             "INSERT INTO order_sales (id,order_id,sale_id,created_at) VALUES (?1,?2,?3,?4)",
@@ -508,7 +512,7 @@ pub fn handle_checkout(conn: &Connection, payload: &CheckoutPayload) -> Result<V
     if payload.tip_cents > 0 {
         conn.execute(
             "INSERT INTO tips (id,tenant_id,sale_id,shift_id,amount,method,created_at,origin_node) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            params![uuid7(), seed::TENANT, sale_ids.last().unwrap(), payload.shift_id, payload.tip_cents, normalize_payment_method(&payload.payment_method), now, seed::NODE],
+            params![uuid7(), seed::TENANT, sale_ids.last().unwrap(), payload.shift_id, payload.tip_cents, normalize_payment_method(&payload.payment_method), now, seed::node()],
         ).map_err(|e| err(e.to_string()))?;
     }
 
@@ -549,7 +553,7 @@ pub fn open_shift(conn: &Connection, employee_id: &str) -> Result<Value> {
     conn.execute(
         "INSERT INTO shifts (id,tenant_id,location_id,employee_id,started_at,status,created_at,updated_at,origin_node)
          VALUES (?1,?2,?3,?4,?5,'abierto',?5,?5,?6)",
-        params![id, seed::TENANT, seed::LOCATION, employee_id, now, seed::NODE],
+        params![id, seed::TENANT, seed::LOCATION, employee_id, now, seed::node()],
     ).map_err(|e| err(e.to_string()))?;
     Ok(json!({ "shiftId": id, "reused": false }))
 }
@@ -582,7 +586,7 @@ pub fn close_shift(conn: &Connection, shift_id: &str) -> Result<Value> {
         conn.execute(
             "INSERT INTO shift_tip_distributions (id,shift_id,employee_id,amount,config_id,created_at,origin_node)
              VALUES (?1,?2,?3,?4,?5,?6,?7)",
-            params![uuid7(), shift_id, employee_id, total_tips, config_id, now, seed::NODE],
+            params![uuid7(), shift_id, employee_id, total_tips, config_id, now, seed::node()],
         ).map_err(|e| err(e.to_string()))?;
     }
 
@@ -801,7 +805,7 @@ pub fn generate_cfdi(conn: &Connection, payload: &GenerateCfdiPayload) -> Result
         "INSERT INTO cfdi_documents
             (id,tenant_id,location_id,issuer_id,sale_id,tipo_comprobante,serie,folio,rfc_receptor,nombre_receptor,uso_cfdi,forma_pago,metodo_pago,moneda,subtotal,iva,total,estado,created_at,updated_at,origin_node)
          VALUES (?1,?2,?3,?4,?5,'I','F',?6,?7,?8,?9,'01','PUE','MXN',?10,?11,?12,'pendiente',?13,?13,?14)",
-        params![doc_id, seed::TENANT, location_id, seed::CFDI_ISSUER, payload.sale_id, folio, payload.rfc_receptor, payload.nombre_receptor, payload.uso_cfdi, subtotal, tax_total, total, now, seed::NODE],
+        params![doc_id, seed::TENANT, location_id, seed::CFDI_ISSUER, payload.sale_id, folio, payload.rfc_receptor, payload.nombre_receptor, payload.uso_cfdi, subtotal, tax_total, total, now, seed::node()],
     ).map_err(|e| err(e.to_string()))?;
 
     let mut stmt = conn
@@ -917,7 +921,7 @@ pub fn generate_global_invoice(conn: &Connection, payload: &GenerateGlobalInvoic
         "INSERT INTO cfdi_documents
             (id,tenant_id,location_id,issuer_id,sale_id,tipo_comprobante,serie,folio,rfc_receptor,nombre_receptor,uso_cfdi,forma_pago,metodo_pago,moneda,subtotal,iva,total,estado,created_at,updated_at,origin_node)
          VALUES (?1,?2,?3,?4,NULL,'I','FG',?5,?6,?7,?8,'01','PUE','MXN',?9,?10,?11,'pendiente',?12,?12,?13)",
-        params![doc_id, seed::TENANT, location_id, seed::CFDI_ISSUER, folio, payload.rfc_receptor, payload.nombre_receptor, payload.uso_cfdi, subtotal_total, tax_total_total, total_total, now, seed::NODE],
+        params![doc_id, seed::TENANT, location_id, seed::CFDI_ISSUER, folio, payload.rfc_receptor, payload.nombre_receptor, payload.uso_cfdi, subtotal_total, tax_total_total, total_total, now, seed::node()],
     ).map_err(|e| err(e.to_string()))?;
 
     let mut conceptos_json = Vec::new();

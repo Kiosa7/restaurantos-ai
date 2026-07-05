@@ -61,12 +61,14 @@ pub struct HubState {
     pub db: Mutex<Connection>,
     tx: broadcast::Sender<HubEvent>,
     http: reqwest::Client,
+    pub sync_clock: crate::sync::HlcClock,
 }
 
 impl HubState {
     pub fn new(conn: Connection) -> Arc<Self> {
         let (tx, _rx) = broadcast::channel(1024);
-        Arc::new(Self { db: Mutex::new(conn), tx, http: reqwest::Client::new() })
+        let sync_clock = crate::sync::HlcClock::new(crate::seed::node());
+        Arc::new(Self { db: Mutex::new(conn), tx, http: reqwest::Client::new(), sync_clock })
     }
 }
 
@@ -164,6 +166,8 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/delivery-orders", get(get_delivery_orders).post(post_delivery_order))
         .route("/delivery-orders/:id/status", post(post_delivery_order_status))
         .route("/reports/dashboard", get(get_reports_dashboard))
+        .route("/sync/pull", get(get_sync_pull))
+        .route("/sync/push", post(post_sync_push))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -208,6 +212,34 @@ async fn get_reports_dashboard(State(state): State<Arc<HubState>>) -> impl IntoR
     Json(crate::reports::dashboard(&conn))
 }
 
+#[derive(Deserialize)]
+struct SyncPullQuery {
+    #[serde(rename = "sinceHlc", default)]
+    since_hlc: String,
+    #[serde(default = "default_pull_limit")]
+    limit: i64,
+}
+fn default_pull_limit() -> i64 { 500 }
+
+/// `GET /sync/pull` — el lado "otro nodo lee mi outbox" del protocolo
+/// (Fase 8 §10.2). Cursor incremental por HLC, reanudable.
+async fn get_sync_pull(State(state): State<Arc<HubState>>, Query(q): Query<SyncPullQuery>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::sync::pull(&conn, &q.since_hlc, q.limit))
+}
+
+#[derive(Deserialize)]
+struct SyncPushBody {
+    events: Vec<crate::sync::SyncEvent>,
+}
+
+/// `POST /sync/push` — el lado "otro nodo me manda sus eventos" del
+/// protocolo. Idempotente por `aggregate_id` ya existente localmente.
+async fn post_sync_push(State(state): State<Arc<HubState>>, Json(body): Json<SyncPushBody>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::sync::push(&conn, &state.sync_clock, &body.events))
+}
+
 async fn get_customers(State(state): State<Arc<HubState>>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
     Json(crate::commerce::list_customers(&conn))
@@ -216,7 +248,12 @@ async fn get_customers(State(state): State<Arc<HubState>>) -> impl IntoResponse 
 async fn post_customer(State(state): State<Arc<HubState>>, Json(payload): Json<crate::commerce::CreateCustomerPayload>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
     match crate::commerce::create_customer(&conn, &payload) {
-        Ok(v) => Json(v).into_response(),
+        Ok(v) => {
+            if let Some(id) = v["customerId"].as_str() {
+                crate::sync::enqueue_customer(&conn, &state.sync_clock, id);
+            }
+            Json(v).into_response()
+        }
         Err(e) => domain_error_response(e.0),
     }
 }
@@ -249,7 +286,15 @@ async fn post_supplier(State(state): State<Arc<HubState>>, Json(payload): Json<c
 
 async fn post_purchase(State(state): State<Arc<HubState>>, Json(payload): Json<crate::commerce::CreatePurchasePayload>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
-    match crate::commerce::create_purchase(&conn, &payload) {
+    let result = crate::commerce::create_purchase(&conn, &payload);
+    if let Ok(v) = &result {
+        for id in v["inventoryMovementIds"].as_array().unwrap_or(&Vec::new()) {
+            if let Some(id) = id.as_str() {
+                crate::sync::enqueue_inventory_movement(&conn, &state.sync_clock, id);
+            }
+        }
+    }
+    match result {
         Ok(v) => Json(v).into_response(),
         Err(e) => domain_error_response(e.0),
     }
@@ -391,7 +436,14 @@ fn domain_error_response(msg: String) -> axum::response::Response {
 async fn post_checkout(State(state): State<Arc<HubState>>, Json(payload): Json<commands::CheckoutPayload>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
     match commands::handle_checkout(&conn, &payload) {
-        Ok(v) => Json(v).into_response(),
+        Ok(v) => {
+            for sale_id in v["saleIds"].as_array().unwrap_or(&Vec::new()) {
+                if let Some(id) = sale_id.as_str() {
+                    crate::sync::enqueue_sale(&conn, &state.sync_clock, id);
+                }
+            }
+            Json(v).into_response()
+        }
         Err(e) => domain_error_response(e.0),
     }
 }
@@ -514,6 +566,14 @@ async fn handle_socket(socket: WebSocket, role: String, device: String, since_in
                 Ok(enriched_payload) => {
                     let ack = serde_json::json!({ "type": "ack", "id": incoming.id, "status": "ok" });
                     let _ = out_tx.send(Message::Text(ack.to_string()));
+
+                    // Descuento de inventario por receta (bump a en_preparacion):
+                    // se sincroniza igual que una compra, CRDT por suma de deltas.
+                    for id in enriched_payload["inventoryMovementIds"].as_array().unwrap_or(&Vec::new()) {
+                        if let Some(id) = id.as_str() {
+                            crate::sync::enqueue_inventory_movement(&conn, &state.sync_clock, id);
+                        }
+                    }
 
                     let event = record_event(&conn, &incoming.id, &incoming.cmd, &enriched_payload);
                     drop(conn);

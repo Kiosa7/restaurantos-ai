@@ -19,7 +19,17 @@ pub fn hash_pin(pin: &str) -> String {
 pub const TENANT: &str = "t1";
 pub const LOCATION: &str = "l1";
 pub const REGISTER: &str = "r1";
-pub const NODE: &str = "t1:l1:hub";
+
+/// Identidad estable de ESTE hub (`tenant:location:device`, Fase 8 §3 del
+/// protocolo de sync de pos-inteligente) — desempate determinista de HLC
+/// entre nodos y trazabilidad de quién originó cada evento. Configurable por
+/// env var porque dos procesos del mismo binario (dos sucursales, o una
+/// sucursal + su réplica de prueba) necesitan ids distintos; en un solo hub
+/// de producción el default basta.
+pub fn node() -> &'static str {
+    static NODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NODE.get_or_init(|| std::env::var("RESTAURANTOS_NODE_ID").unwrap_or_else(|_| "t1:l1:hub".into()))
+}
 pub const ROLE_MESERO: &str = "role-mesero";
 pub const ROLE_COCINA: &str = "role-cocina";
 pub const ROLE_CAJERO: &str = "role-cajero";
@@ -48,15 +58,15 @@ pub fn course_for_category(category_id: &str) -> &'static str {
 pub fn seed(conn: &Connection, now: i64) {
     conn.execute(
         "INSERT OR IGNORE INTO tenants (id,name,currency,created_at,updated_at,origin_node) VALUES (?1,?2,'MXN',?3,?3,?4)",
-        params![TENANT, "Restaurante Demo", now, NODE],
+        params![TENANT, "Restaurante Demo", now, node()],
     ).unwrap();
     conn.execute(
         "INSERT OR IGNORE INTO locations (id,tenant_id,name,code,created_at,updated_at,origin_node) VALUES (?1,?2,'Sucursal Centro','A',?3,?3,?4)",
-        params![LOCATION, TENANT, now, NODE],
+        params![LOCATION, TENANT, now, node()],
     ).unwrap();
     conn.execute(
         "INSERT OR IGNORE INTO registers (id,location_id,name,device_node,created_at,updated_at,origin_node) VALUES (?1,?2,'Caja principal',?4,?3,?3,?4)",
-        params![REGISTER, LOCATION, now, NODE],
+        params![REGISTER, LOCATION, now, node()],
     ).unwrap();
 
     // Capacidades por rol (docs/permisos-plugins.md) — el LLM y las pantallas
@@ -68,7 +78,7 @@ pub fn seed(conn: &Connection, now: i64) {
     ] {
         conn.execute(
             "INSERT OR IGNORE INTO roles (id,tenant_id,name,permissions_json,is_system,created_at,updated_at,origin_node) VALUES (?1,?2,?3,?4,1,?5,?5,?6)",
-            params![role_id, TENANT, name, permissions, now, NODE],
+            params![role_id, TENANT, name, permissions, now, node()],
         ).unwrap();
     }
     // PINs demo (documentados aquí, NO son un mecanismo de seguridad real
@@ -80,21 +90,21 @@ pub fn seed(conn: &Connection, now: i64) {
     ] {
         conn.execute(
             "INSERT OR IGNORE INTO employees (id,tenant_id,role_id,name,pin_hash,created_at,updated_at,origin_node) VALUES (?1,?2,?3,?4,?5,?6,?6,?7)",
-            params![emp_id, TENANT, role_id, name, hash_pin(pin), now, NODE],
+            params![emp_id, TENANT, role_id, name, hash_pin(pin), now, node()],
         ).unwrap();
     }
 
     conn.execute(
         "INSERT OR IGNORE INTO taxes (id,tenant_id,name,rate,kind,included,created_at,updated_at,origin_node) VALUES (?1,?2,'IVA 16%',0.16,'percent',1,?3,?3,?4)",
-        params![TAX_IVA, TENANT, now, NODE],
+        params![TAX_IVA, TENANT, now, node()],
     ).unwrap();
     conn.execute(
         "INSERT OR IGNORE INTO tax_profiles (id,tenant_id,name,tax_ids_json,created_at,updated_at,origin_node) VALUES (?1,?2,'IVA general',?3,?4,?4,?5)",
-        params![PROFILE_IVA, TENANT, format!("[\"{TAX_IVA}\"]"), now, NODE],
+        params![PROFILE_IVA, TENANT, format!("[\"{TAX_IVA}\"]"), now, node()],
     ).unwrap();
     conn.execute(
         "INSERT OR IGNORE INTO units (id,tenant_id,name,factor,allow_fraction,created_at,updated_at,origin_node) VALUES (?1,?2,'pieza',1,1,?3,?3,?4)",
-        params![UNIT_PIEZA, TENANT, now, NODE],
+        params![UNIT_PIEZA, TENANT, now, node()],
     ).unwrap();
 
     for (id, name) in [
@@ -106,7 +116,7 @@ pub fn seed(conn: &Connection, now: i64) {
     ] {
         conn.execute(
             "INSERT OR IGNORE INTO categories (id,tenant_id,name,created_at,updated_at,origin_node) VALUES (?1,?2,?3,?4,?4,?5)",
-            params![id, TENANT, name, now, NODE],
+            params![id, TENANT, name, now, node()],
         ).unwrap();
     }
 
@@ -119,12 +129,12 @@ pub fn seed(conn: &Connection, now: i64) {
         conn.execute(
             "INSERT OR IGNORE INTO products (id,tenant_id,name,name_normalized,category_id,unit_id,cost,price,tax_profile_id,track_stock,source,created_at,updated_at,origin_node)
              VALUES (?1,?2,?3,?3,'cat_insumos',?4,?5,0,?6,1,'manual',?7,?7,?8)",
-            params![id, TENANT, name, UNIT_PIEZA, cost_cents, PROFILE_IVA, now, NODE],
+            params![id, TENANT, name, UNIT_PIEZA, cost_cents, PROFILE_IVA, now, node()],
         ).unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO inventory_movements (id,tenant_id,location_id,product_id,type,qty_delta,unit_cost,created_at,origin_node)
              VALUES (?1,?2,?3,?4,'initial',1000,?5,?6,?7)",
-            params![format!("mov-init-{id}"), TENANT, LOCATION, id, cost_cents, now, NODE],
+            params![format!("mov-init-{id}"), TENANT, LOCATION, id, cost_cents, now, node()],
         ).unwrap();
     }
 
@@ -139,20 +149,20 @@ pub fn seed(conn: &Connection, now: i64) {
         conn.execute(
             "INSERT OR IGNORE INTO products (id,tenant_id,name,name_normalized,category_id,unit_id,cost,price,tax_profile_id,track_stock,source,created_at,updated_at,origin_node)
              VALUES (?1,?2,?3,?3,?4,?5,0,?6,?7,0,'manual',?8,?8,?9)",
-            params![id, TENANT, name, category, UNIT_PIEZA, price_cents, PROFILE_IVA, now, NODE],
+            params![id, TENANT, name, category, UNIT_PIEZA, price_cents, PROFILE_IVA, now, node()],
         ).unwrap();
     }
 
     // Receta de los tacos: 3 tortillas + 0.15kg carne + 0.02kg cebolla -------
     conn.execute(
         "INSERT OR IGNORE INTO recipes (id,tenant_id,product_id,yield_qty,created_at,updated_at,origin_node) VALUES ('recipe-tacos-pastor',?1,'mi_tacos_pastor',1,?2,?2,?3)",
-        params![TENANT, now, NODE],
+        params![TENANT, now, node()],
     ).unwrap();
     for (ingredient, qty) in [("insumo-tortilla", 3.0_f64), ("insumo-carne-pastor", 0.15), ("insumo-cebolla", 0.02)] {
         conn.execute(
             "INSERT OR IGNORE INTO recipe_items (id,recipe_id,ingredient_id,qty,unit_id,created_at,updated_at,origin_node)
              VALUES (?1,'recipe-tacos-pastor',?2,?3,?4,?5,?5,?6)",
-            params![format!("ri-{ingredient}"), ingredient, qty, UNIT_PIEZA, now, NODE],
+            params![format!("ri-{ingredient}"), ingredient, qty, UNIT_PIEZA, now, node()],
         ).unwrap();
     }
 
@@ -160,23 +170,23 @@ pub fn seed(conn: &Connection, now: i64) {
     conn.execute(
         "INSERT OR IGNORE INTO modifier_groups (id,tenant_id,product_id,name,single_choice,required,sort_order,created_at,updated_at,origin_node)
          VALUES ('mg_salsa',?1,'mi_tacos_pastor','Salsa',1,1,0,?2,?2,?3)",
-        params![TENANT, now, NODE],
+        params![TENANT, now, node()],
     ).unwrap();
     for (id, name, delta) in [("op_salsa_verde", "Verde", 0_i64), ("op_salsa_roja", "Roja", 0), ("op_salsa_ambas", "Ambas", 0)] {
         conn.execute(
             "INSERT OR IGNORE INTO modifier_options (id,group_id,name,price_delta,sort_order,created_at,updated_at,origin_node) VALUES (?1,'mg_salsa',?2,?3,0,?4,?4,?5)",
-            params![id, name, delta, now, NODE],
+            params![id, name, delta, now, node()],
         ).unwrap();
     }
     conn.execute(
         "INSERT OR IGNORE INTO modifier_groups (id,tenant_id,product_id,name,single_choice,required,sort_order,created_at,updated_at,origin_node)
          VALUES ('mg_tamano',?1,'mi_agua_horchata','Tamaño',1,1,0,?2,?2,?3)",
-        params![TENANT, now, NODE],
+        params![TENANT, now, node()],
     ).unwrap();
     for (id, name, delta) in [("op_chica", "Chica", 0_i64), ("op_grande", "Grande", 1500)] {
         conn.execute(
             "INSERT OR IGNORE INTO modifier_options (id,group_id,name,price_delta,sort_order,created_at,updated_at,origin_node) VALUES (?1,'mg_tamano',?2,?3,0,?4,?4,?5)",
-            params![id, name, delta, now, NODE],
+            params![id, name, delta, now, node()],
         ).unwrap();
     }
 
@@ -197,7 +207,7 @@ pub fn seed(conn: &Connection, now: i64) {
         conn.execute(
             "INSERT OR IGNORE INTO tables (id,tenant_id,location_id,number,capacity,status,zone,created_at,updated_at,origin_node)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?8,?9)",
-            params![id, TENANT, LOCATION, number, capacity, status, zone, now, NODE],
+            params![id, TENANT, LOCATION, number, capacity, status, zone, now, node()],
         ).unwrap();
     }
 
@@ -205,7 +215,7 @@ pub fn seed(conn: &Connection, now: i64) {
     conn.execute(
         "INSERT OR IGNORE INTO tip_pool_configs (id,tenant_id,location_id,mode,kitchen_share,active_from,created_at,updated_at,origin_node)
          VALUES ('tip-config-default',?1,?2,'individual',0,?3,?3,?3,?4)",
-        params![TENANT, LOCATION, now, NODE],
+        params![TENANT, LOCATION, now, node()],
     ).unwrap();
 
     // Emisor CFDI demo (Fase 7): RFC genérico de pruebas del SAT, NO uno
@@ -214,7 +224,7 @@ pub fn seed(conn: &Connection, now: i64) {
     conn.execute(
         "INSERT OR IGNORE INTO cfdi_issuers (id,tenant_id,rfc,razon_social,regimen_fiscal,lugar_expedicion,pac_provider,created_at,updated_at,origin_node)
          VALUES (?1,?2,'XAXX010101000','Restaurante Demo SA de CV','601','06000','sw_sapien',?3,?3,?4)",
-        params![CFDI_ISSUER, TENANT, now, NODE],
+        params![CFDI_ISSUER, TENANT, now, node()],
     ).unwrap();
 
     log::info!("hub: seed demo aplicado (idempotente)");
