@@ -209,7 +209,7 @@ marketplace · Auditoría avanzada · Franquicias · API pública · Visión ava
 | **5 Infraestructura** 🟡 | Hub server (HTTP+WS) ✅, pairing real ✅ (genera/persiste, enforcement ⛔), servido de PWA ✅ — updater y empaquetado ⛔ | "Instalación limpia en PC virgen < 30 min" SIN validar (falta `tauri build`, decisión de posponerlo ya tomada) |
 | **6 MVP** ✅ | Los 9 puntos de §10 abordados: comandas/inventario/caja/turnos/impresión(sw)/RBAC/backup/IA/pairing, todo verificado contra el binario real | **Un restaurante piloto opera un servicio de viernes completo sin tocar papel** — el software ya lo soporta; falta el piloto real (⛔ §11.4) para decir que se cumplió en la práctica |
 | **7 Comercial** ✅ (salvo timbrado ⛔) | CFDI (generación ✅, timbrado ⛔), factura global ✅ (complemento de pago ⛔ transitivo de timbrado), clientes ✅, fidelización ✅, promociones ✅, compras+proveedores+OCR ✅, reservaciones ✅, delivery/para llevar ✅, reportes avanzados ✅ | Primer cliente de pago facturando — lejos, falta timbrado real; todo el resto de Fase 7 ya opera contra el binario real |
-| **8 Enterprise** ⬜ ⬅️ SIGUIENTE | Multi-sucursal, plugins, API pública | Cadena 3+ sucursales sincronizando |
+| **8 Enterprise** 🟡 | Multi-sucursal ✅, plugins ✅, auditoría avanzada ✅, API pública ✅ — franquicias ⛔ (sin caso real que especifique reglas de negocio) y visión avanzada ⛔ (sin cámara cenital física) | Cadena 3+ sucursales sincronizando — la base técnica ya está verificada con 2 nodos reales; falta un caso real con 3+ sucursales de verdad |
 
 Entregables documentales de la Fase 2 (crear en `docs/`): visión de producto ·
 arquitectura general/software/datos/sync/IA/seguridad · modelo de dominio · modelo
@@ -494,11 +494,33 @@ Fase 2 por falta de cuenta de PAC).
    `Authorization` se rechaza, con scope correcto funciona, con scope
    equivocado se rechaza, una key inventada se rechaza, revocar corta el
    acceso de inmediato — más revisión visual del panel (2026-07-05).
-5. **Franquicias, visión avanzada** — sin empezar; visión avanzada
-   (OCR/cámara cenital) depende de hardware que no existe en esta máquina
-   (cámara cenital real), mismo patrón de bloqueo que la impresora térmica
-   (§11.3) — evaluar si aplica marcar ⛔ formalmente al llegar a ese punto
-   en vez de construir en el vacío.
+5. ⛔ **Visión avanzada** (OCR/cámara cenital) — BLOQUEADO, mismo patrón
+   que la impresora térmica (§11.3): depende de hardware que no existe en
+   esta máquina (cámara cenital real para conteo de mesas/detección de
+   platillos por visión). El OCR de FACTURAS (Fase 7, `llava:7b` sobre una
+   foto subida) ya existe y no depende de esto — "visión avanzada" aquí es
+   específicamente cámara en vivo, un componente de hardware distinto.
+   Desbloquea cuando exista la cámara: el patrón a seguir es el mismo de
+   `ai.rs::extract_invoice_from_image` (Ollama/llava vía `reqwest`, nunca
+   bloqueando el WS), solo cambia la fuente de la imagen (stream de cámara
+   en vez de una foto subida).
+6. ⛔ **Franquicias** — NO CONSTRUIDO, y deliberadamente no se inventó un
+   modelo de regalías/contratos de franquicia especulativo. Distinción
+   importante: la base TÉCNICA para "múltiples locaciones bajo un mismo
+   dueño" ya existe y quedó verificada en el punto 1 de esta fase
+   (multi-sucursal: `location_id` distinto por nodo, protocolo de sync
+   real). Lo que falta es la lógica de NEGOCIO específica de franquicias
+   (cálculo de regalías, gobierno de marca compartida entre franquiciante/
+   franquiciatario, permisos diferenciados entre ambos roles) — eso
+   requiere un contrato de franquicia real del que derivar las reglas
+   (¿qué % de regalía? ¿quién controla el catálogo/precios, la casa
+   matriz o cada franquiciatario? ¿hay marca única o multi-marca?).
+   Construir eso sin un caso real que lo especifique sería inventar reglas
+   de negocio en el vacío — mismo criterio que no inventar "ventas a
+   crédito" para complemento de pago (Fase 7 §10.1 punto 2) ni una
+   frontera de plugins de terceros sin un plugin real (§10.2 punto 2).
+   Bloqueado por falta de un caso de negocio real, no por falta de tiempo
+   o de diseño técnico — la base ya está.
 
 ## 11. Supuestos pendientes de confirmar con el dueño
 
@@ -565,15 +587,14 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   que solo da un timbrado real) — ninguno de los dos es un hueco de
   diseño, son dependencias externas documentadas. Fase 7 no tiene más
   trabajo pendiente que no dependa de esos dos bloqueos (2026-07-05).
-- 🟡 Fase 8 Enterprise — AVANZANDO: multi-sucursal (sync HLC/outbox) ✅
-  (puerto real, no simulado, verificado con dos binarios sincronizando
-  entre sí), plugins/marketplace ✅ (registro enable/disable sobre la
-  tabla `plugins` heredada de 0008, nunca usada hasta ahora; 4 paneles de
-  Fase 7 ahora apagables en vivo), auditoría avanzada ✅ (UI real sobre
-  `audit_log` + verificación de integridad de la cadena de hash completa)
-  y API pública ✅ (`/api/v1/*` con API keys + scopes, la única superficie
-  del hub pensada para exponerse fuera de la LAN). Faltan franquicias y
-  visión avanzada — ver §10.2 (2026-07-05).
+- 🟡 Fase 8 Enterprise — 4/6 puntos de §10.2 cerrados con verificación
+  real: multi-sucursal (sync HLC/outbox) ✅, plugins/marketplace ✅,
+  auditoría avanzada ✅, API pública ✅. ⛔ Franquicias (sin caso de
+  negocio real del que derivar reglas de regalías/gobierno de marca — la
+  base técnica multi-sucursal ya la cubre) y ⛔ visión avanzada (sin
+  cámara cenital física, mismo patrón que la impresora térmica). Ninguno
+  de los dos es una omisión: son bloqueos documentados con la misma
+  honestidad que el resto del proyecto — ver §10.2 (2026-07-05).
 
 ## Bitácora
 
@@ -1409,3 +1430,41 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     con Playwright: se generó una key desde la propia UI y se confirmó
     que el aviso con la key en claro aparece.
   - Sigue pendiente de Fase 8: franquicias, visión avanzada — ver §10.2.
+- 2026-07-05: Fase 8 (Enterprise) — evaluación final de franquicias y
+  visión avanzada. CIERRE DE SESIÓN.
+  - **Visión avanzada** marcada ⛔: depende de una cámara cenital física
+    que no existe en esta máquina — mismo patrón de bloqueo ya establecido
+    para la impresora térmica (§11.3) y el restaurante piloto (§11.4). El
+    OCR de facturas (Fase 7, `llava:7b` sobre una foto subida) NO es lo
+    mismo y ya está construido; "visión avanzada" es específicamente
+    cámara en vivo. Cuando exista la cámara, el patrón de implementación
+    ya está probado (`ai.rs::extract_invoice_from_image`): Ollama/llava
+    vía `reqwest`, nunca bloqueando el WS.
+  - **Franquicias** marcada ⛔ DELIBERADAMENTE, no por falta de tiempo:
+    se evaluó construir un modelo de regalías/gobierno de marca y se
+    decidió NO hacerlo sin un caso de negocio real. La base TÉCNICA
+    (múltiples locaciones bajo un mismo dueño, sincronizando) ya quedó
+    verificada con dos hubs reales en el punto 1 de esta misma fase — lo
+    que falta es la capa de reglas de NEGOCIO (¿qué % de regalía? ¿quién
+    gobierna el catálogo, la casa matriz o cada franquiciatario? ¿marca
+    única o multi-marca?), y esas reglas solo pueden salir de un contrato
+    de franquicia real, no de una suposición. Mismo criterio ya aplicado
+    dos veces antes en esta sesión: no se inventó "ventas a crédito" para
+    complemento de pago (Fase 7 §10.1 punto 2) ni una frontera de plugins
+    de terceros sin un plugin real que la necesite (§10.2 punto 2) — la
+    disciplina de "no diseñar para requisitos hipotéticos" se sostuvo
+    hasta el final, no solo al principio.
+  - **Con esto, Fase 8 queda en 4/6 puntos de §10.2 cerrados con
+    verificación real** (multi-sucursal, plugins, auditoría avanzada, API
+    pública) y 2/6 bloqueados con justificación explícita (franquicias por
+    falta de caso de negocio real, visión avanzada por falta de hardware)
+    — ningún punto quedó "sin decidir" o silenciosamente abandonado.
+  - **Estado general del proyecto al cierre de esta sesión**: Fases 1-6
+    completas (con las piezas de hardware/decisión de producto ya
+    documentadas como pendientes desde antes). Fase 7 completa salvo
+    timbrado real (⛔, sin cuenta de PAC) y su dependiente transitivo
+    (complemento de pago). Fase 8 con 4 de 6 puntos completos y
+    verificados contra binarios reales, 2 bloqueados con justificación.
+    Ver el mensaje final de esta sesión para el resumen completo de
+    decisiones autónomas, bloqueos y próximos pasos para el dueño del
+    proyecto.
