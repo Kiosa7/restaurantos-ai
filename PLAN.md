@@ -242,10 +242,14 @@ salvo donde se anota dependencia):
 3. ✅ **Descuento de inventario por receta real** — `handle_bump_platillo`
    en `commands.rs`: al pasar a `en_preparacion` lee la receta y escribe
    `inventory_movements` de verdad (no un test manual).
-4. **Impresión real**: cablear `spikes/escpos/{encoder,tickets}.mjs` (portar
-   a TS dentro de `app/src/infra/`) con el transporte WebUSB/Serial ya
-   existente en pos-inteligente (`thermalPrinter.ts`, aún no copiado a este
-   repo). Sigue ⛔ la validación con impresora física (spike 2).
+4. 🟡 **Impresión real** — `app/src/infra/print/{escposEncoder,tickets,
+   printSimulator,printClient}.ts` (puerto TS de `spikes/escpos/`) +
+   `thermalPrinter.ts` copiado tal cual de pos-inteligente. Botón "Imprimir
+   comanda" en `CocinaScreen` y "Imprimir cuenta" en `CajaScreen`, con
+   `printClient.ts` intentando reconectar/pedir la impresora vía WebUSB.
+   ⛔ Sigue sin validar con impresora física 80mm real (spike 2) — el botón
+   fallará con mensaje legible ("Impresora no conectada...") hasta que exista
+   el hardware.
 5. ✅ **Turnos y propinas en UI** — botones abrir/cerrar turno en
    `CajaScreen.tsx` vía `POST /shifts/open|close`; propina capturada en el
    cobro se reparte al cerrar turno (modo `individual`, `close_shift` en
@@ -312,13 +316,14 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   validado (protocolo + PWA estática, 2/2 tests). Pairing MVP. ⛔ empaquetado
   real (MSI/NSIS), updater y resource bundling de la PWA en producción
   pendientes (2026-07-03) — ver docs/spikes/spike-5-hub-rust.md.
-- 🟡 Fase 6 MVP — 4/9 puntos de §10 completos: (1) hub persistido en SQLite,
+- 🟡 Fase 6 MVP — 5/9 puntos de §10 completos: (1) hub persistido en SQLite,
   (2) Caja funcional (ver/dividir/cobrar), (3) descuento de inventario por
-  receta como caso de uso real, (5) turnos/propinas en UI. Mesero↔hub↔KDS↔Caja
-  funcionando de punta a punta contra el binario real (comanda→bump→cobro→
-  turno cerrado con propina repartida, verificado con scripts WS+HTTP en
-  vivo, no solo tests). Falta: (4) impresión real, (6) RBAC/PIN, (7) backup
-  cifrado, (8) asistente IA v1, (9) pairing real (2026-07-04).
+  receta como caso de uso real, (4) impresión ESC/POS en software (⛔ falta
+  hardware), (5) turnos/propinas en UI. Mesero↔hub↔KDS↔Caja funcionando de
+  punta a punta contra el binario real (comanda→bump→cobro→turno cerrado con
+  propina repartida, verificado con scripts WS+HTTP en vivo, no solo tests).
+  Falta: (6) RBAC/PIN, (7) backup cifrado, (8) asistente IA v1, (9) pairing
+  real (2026-07-04).
 - ⬜ Fases 7–8 — sin empezar, ver §9.
 
 ## Bitácora
@@ -564,3 +569,21 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     sección "Actualización Fase 6").
   - Próximo: puntos 4 (impresión), 6 (RBAC/PIN), 7 (backup), 8 (IA), 9
     (pairing real) de §10, en ese orden, luego Fases 7–8.
+- 2026-07-04: Fase 6 punto 4 (impresión ESC/POS) completado en software.
+  - Puerto TS 1:1 de `spikes/escpos/{encoder,tickets,simulator}.mjs` a
+    `app/src/infra/print/{escposEncoder,tickets,printSimulator}.ts`, ahora
+    sobre tipos/datos reales (`OpenOrder`, `CheckoutResponse`) en vez del
+    prototipo. `thermalPrinter.ts` (transporte WebUSB/Serial) copiado tal
+    cual de pos-inteligente, ADR-1. `printClient.ts` nuevo: intenta
+    reconectar a una impresora ya autorizada, si no pide una nueva — SIEMPRE
+    disparado desde un click (WebUSB exige gesto del usuario).
+  - Botones reales: "Imprimir comanda" en `CocinaScreen` (respaldo físico de
+    cocina, PLAN.md §4), "Imprimir cuenta" en `CajaScreen` tras un cobro
+    exitoso. Ambos con manejo de error legible vía `useToast` — sin
+    impresora conectada, el sistema sigue funcionando (falla ese botón, no
+    la pantalla).
+  - 3 tests nuevos (`tickets.test.ts`) replican las mismas propiedades del
+    spike 2: comanda nunca abre cajón, cuenta en efectivo sí lo abre, cuenta
+    con tarjeta no. 23/23 tests totales, typecheck y build limpios.
+  - ⛔ Sigue sin validar con impresora térmica 80mm real — sin cambio desde
+    Fase 2 (spike 2), sigue pendiente que el dueño consiga el hardware.

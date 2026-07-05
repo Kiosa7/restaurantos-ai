@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { OrderTicket } from "@ui/components/restaurant";
+import { Button, useToast } from "@ui/components/ui";
 import { HubClient, type HubEvent } from "@infra/hub/hubClient";
 import { cents } from "@domain/money";
+import { comandaTicket } from "@infra/print/tickets";
+import { printTicket } from "@infra/print/printClient";
 
 interface ComandaItemKds {
   id: string;
@@ -30,6 +33,7 @@ export function CocinaScreen({ hubUrl = "ws://localhost:5190/ws" }: { hubUrl?: s
   const [conectado, setConectado] = useState(false);
   const clientRef = useRef<HubClient | null>(null);
   const [, forceTick] = useState(0);
+  const { toast } = useToast();
 
   useEffect(() => {
     function handleEvent(evt: HubEvent) {
@@ -89,6 +93,25 @@ export function CocinaScreen({ hubUrl = "ws://localhost:5190/ws" }: { hubUrl?: s
     clientRef.current?.sendCommand("bump_platillo", { orderItemId: itemId, nextStatus });
   }
 
+  /** Respaldo físico de cocina (PLAN.md §4): si el KDS se cae en pleno
+   * servicio, la comanda ya se imprimió en papel. Requiere impresora
+   * térmica 80mm real (⛔ spike 2, pendiente conseguir) — sin ella, el botón
+   * falla con un mensaje legible en vez de romper la pantalla. */
+  async function imprimir(c: ComandaKds) {
+    try {
+      const bytes = comandaTicket({
+        mesa: c.mesa,
+        folio: c.orderId.slice(0, 8),
+        horaTexto: new Date(c.sentAtMs).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }),
+        items: c.items.map((it) => ({ cantidad: it.cantidad, nombre: it.nombre, modificadores: it.modificadores, notas: it.notas })),
+      });
+      await printTicket(bytes);
+      toast("Comanda enviada a la impresora", "success");
+    } catch (e) {
+      toast(`No se pudo imprimir: ${(e as Error).message}`, "warning");
+    }
+  }
+
   const comandasActivas = Object.values(comandas).filter((c) => c.items.some((it) => it.estado !== "entregado"));
 
   return (
@@ -96,27 +119,29 @@ export function CocinaScreen({ hubUrl = "ws://localhost:5190/ws" }: { hubUrl?: s
       <p className="mb-4 text-sm text-slate-400">{conectado ? "● Conectado al hub" : "○ Conectando…"}</p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {comandasActivas.map((c) => (
-          <OrderTicket
-            key={c.orderId}
-            mesa={c.mesa}
-            folio={c.orderId.slice(0, 8)}
-            items={c.items.map((it) => ({
-              id: it.id,
-              menuItemId: it.id,
-              nombre: it.nombre,
-              tiempo: "fuerte",
-              cantidad: it.cantidad,
-              modificadores: it.modificadores.map((m, i) => ({ groupId: "", optionId: String(i), nombre: m.nombre, ajusteCents: cents(0) })),
-              notas: it.notas,
-              estado: it.estado,
-              precioBaseCents: cents(0),
-            }))}
-            segundosTranscurridos={Math.max(0, Math.floor((Date.now() - c.sentAtMs) / 1000))}
-            onBump={(itemId) => {
-              const item = c.items.find((it) => it.id === itemId);
-              if (item) bump(itemId, item.estado);
-            }}
-          />
+          <div key={c.orderId} className="flex flex-col gap-2">
+            <OrderTicket
+              mesa={c.mesa}
+              folio={c.orderId.slice(0, 8)}
+              items={c.items.map((it) => ({
+                id: it.id,
+                menuItemId: it.id,
+                nombre: it.nombre,
+                tiempo: "fuerte",
+                cantidad: it.cantidad,
+                modificadores: it.modificadores.map((m, i) => ({ groupId: "", optionId: String(i), nombre: m.nombre, ajusteCents: cents(0) })),
+                notas: it.notas,
+                estado: it.estado,
+                precioBaseCents: cents(0),
+              }))}
+              segundosTranscurridos={Math.max(0, Math.floor((Date.now() - c.sentAtMs) / 1000))}
+              onBump={(itemId) => {
+                const item = c.items.find((it) => it.id === itemId);
+                if (item) bump(itemId, item.estado);
+              }}
+            />
+            <Button variant="outline" size="sm" onClick={() => imprimir(c)}>Imprimir comanda</Button>
+          </div>
         ))}
         {comandasActivas.length === 0 && <p className="text-slate-500">Sin comandas en cocina.</p>}
       </div>
