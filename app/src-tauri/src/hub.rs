@@ -170,6 +170,8 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/sync/push", post(post_sync_push))
         .route("/plugins", get(get_plugins))
         .route("/plugins/:id/toggle", post(post_plugin_toggle))
+        .route("/audit-log", get(get_audit_log))
+        .route("/audit-log/verify", get(get_audit_log_verify))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -258,6 +260,24 @@ async fn post_plugin_toggle(State(state): State<Arc<HubState>>, Path(id): Path<S
         Ok(v) => Json(v).into_response(),
         Err(e) => domain_error_response(e.0),
     }
+}
+
+#[derive(Deserialize)]
+struct AuditLogQuery {
+    entity: Option<String>,
+    #[serde(default = "default_audit_limit")]
+    limit: i64,
+}
+fn default_audit_limit() -> i64 { 100 }
+
+async fn get_audit_log(State(state): State<Arc<HubState>>, Query(q): Query<AuditLogQuery>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::audit::list(&conn, q.entity.as_deref(), q.limit))
+}
+
+async fn get_audit_log_verify(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::audit::verify_chain(&conn))
 }
 
 async fn get_customers(State(state): State<Arc<HubState>>) -> impl IntoResponse {

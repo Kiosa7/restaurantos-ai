@@ -465,9 +465,18 @@ Fase 2 por falta de cuenta de PAC).
    confirmó que su panel desaparece de la UI, y se reactivó desde el
    propio checkbox de la UI (no por HTTP) confirmando que reaparece
    (2026-07-05).
-3. **Auditoría avanzada** — `audit_log` (0001, hash-encadenado) ya se
-   usa de verdad desde el punto 1 (`sync.lww_overwrite`); falta una UI
-   dedicada para consultarlo (no solo que exista la tabla).
+3. ✅ **Auditoría avanzada** — `audit.rs` (`list`/`verify_chain`) sobre
+   `audit_log` (0001, hash-encadenado), que ya se usaba de verdad desde el
+   punto 1 (`sync.lww_overwrite`). `verify_chain` recalcula la cadena
+   COMPLETA desde `seq=1` y confirma que cada `hash` coincide con lo que
+   el código de escritura habría producido — detecta manipulación directa
+   en SQLite (editar/borrar una fila sin pasar por el código), no solo
+   confía en que nadie lo haga. Rutas `GET /audit-log` (filtrable por
+   `entity`) y `GET /audit-log/verify`. `AuditoriaPanel.tsx` con tabla +
+   botón "Verificar integridad de la cadena". Verificado contra el
+   binario real (conflicto LWW real vía `/sync/push` con un evento de HLC
+   deliberadamente antiguo, que pierde y queda trazado) y con revisión
+   visual en Playwright (2026-07-05).
 4. **API pública** — exponer un subconjunto de los endpoints ya existentes
    bajo autenticación por API key para integraciones de terceros
    (contabilidad, agregadores de delivery reales).
@@ -544,10 +553,12 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   trabajo pendiente que no dependa de esos dos bloqueos (2026-07-05).
 - 🟡 Fase 8 Enterprise — AVANZANDO: multi-sucursal (sync HLC/outbox) ✅
   (puerto real, no simulado, verificado con dos binarios sincronizando
-  entre sí) y plugins/marketplace ✅ (registro enable/disable sobre la
+  entre sí), plugins/marketplace ✅ (registro enable/disable sobre la
   tabla `plugins` heredada de 0008, nunca usada hasta ahora; 4 paneles de
-  Fase 7 ahora apagables en vivo). Faltan auditoría avanzada (UI), API
-  pública, franquicias y visión avanzada — ver §10.2 (2026-07-05).
+  Fase 7 ahora apagables en vivo) y auditoría avanzada ✅ (UI real sobre
+  `audit_log` + verificación de integridad de la cadena de hash completa).
+  Faltan API pública, franquicias y visión avanzada — ver §10.2
+  (2026-07-05).
 
 ## Bitácora
 
@@ -1313,3 +1324,35 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     verificación.
   - Sigue pendiente de Fase 8: auditoría avanzada (UI), API pública,
     franquicias, visión avanzada — ver §10.2.
+- 2026-07-05: Fase 8 (Enterprise) — auditoría avanzada.
+  - **`audit.rs`** (nuevo): `list(conn, entity, limit)` (filtra por
+    entidad, ej. `customer`) y `verify_chain(conn)` — recorre TODA la
+    cadena desde `seq=1`, recomputando cada `hash` con el mismo algoritmo
+    exacto que `sync::audit_log_write` (`sha256(prev_hash + action +
+    entity_id + before_json + after_json)`) y comparando contra lo
+    guardado; si algo no cuadra (alguien editó/borró una fila de
+    `audit_log` directamente en SQLite, sin pasar por el código), lo
+    detecta y devuelve en qué `seq` se rompió y por qué. No es solo "la
+    tabla existe" — es la misma garantía que ya tenía la cadena de
+    `sales`, aplicada a la bitácora general.
+  - Rutas `GET /audit-log` (con `?entity=`) y `GET /audit-log/verify`.
+    `AuditoriaPanel.tsx`: tabla de eventos (fecha/acción/entidad/origen) +
+    botón "Verificar integridad de la cadena" que llama al endpoint y
+    muestra "Cadena íntegra (N registros)" o el punto exacto de ruptura.
+  - Verificado: `cargo test` 17/17 (nuevo
+    `auditoria_lista_y_detecta_manipulacion_de_la_cadena`: genera un
+    conflicto LWW real, confirma que `verify_chain` da `valid=true`,
+    manipula una fila directamente con SQL crudo — bypaseando todo el
+    código — y confirma que `verify_chain` ahora da `valid=false` con el
+    `seq` exacto), `npm test` 23/23, typecheck/build limpios. Contra el
+    binario real: cliente creado, se le empujó un evento de sync
+    deliberadamente viejo (HLC mínimo) vía `POST /sync/push` — perdió el
+    LWW como se esperaba (el nombre real no se sobreescribió), y el
+    intento perdedor quedó trazado en `audit_log`; `verify_chain` reportó
+    la cadena íntegra antes y después (un conflicto real trazado no es lo
+    mismo que una manipulación — la cadena sigue siendo válida). Revisión
+    visual con Playwright: la fila `sync.lww_overwrite` aparece en la
+    tabla y el botón de integridad muestra "Cadena íntegra" contra datos
+    reales del hub corriendo.
+  - Sigue pendiente de Fase 8: API pública, franquicias, visión avanzada
+    — ver §10.2.

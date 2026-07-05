@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod audit;
 pub mod backup;
 pub mod commands;
 pub mod commerce;

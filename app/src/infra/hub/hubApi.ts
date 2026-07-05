@@ -399,3 +399,38 @@ export async function fetchPlugins(baseUrl = DEFAULT_BASE): Promise<Plugin[]> {
 export function togglePlugin(id: string, enabled: boolean, baseUrl = DEFAULT_BASE): Promise<{ id: string; enabled: boolean }> {
   return postJson(baseUrl, `/plugins/${id}/toggle`, { enabled });
 }
+
+// ---------------------------------------------------------------------------
+// Fase 8: auditoría avanzada
+// ---------------------------------------------------------------------------
+
+export interface AuditLogEntry {
+  id: string;
+  seq: number;
+  actor: string | null;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  beforeJson: unknown;
+  afterJson: unknown;
+  originNode: string;
+  ts: number;
+}
+
+export async function fetchAuditLog(entity?: string, baseUrl = DEFAULT_BASE): Promise<AuditLogEntry[]> {
+  const qs = entity ? `?entity=${encodeURIComponent(entity)}` : "";
+  const res = await fetch(`${baseUrl}/audit-log${qs}`);
+  return res.json();
+}
+
+export interface AuditChainVerification {
+  valid: boolean;
+  brokenAtSeq: number | null;
+  totalRecords: number;
+  reason?: string;
+}
+
+export async function verifyAuditChain(baseUrl = DEFAULT_BASE): Promise<AuditChainVerification> {
+  const res = await fetch(`${baseUrl}/audit-log/verify`);
+  return res.json();
+}

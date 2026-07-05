@@ -681,3 +681,44 @@ fn plugins_se_listan_sembrados_y_se_pueden_deshabilitar() {
 
     assert!(set_enabled(&conn, "plugin_inexistente", true).is_err(), "un id inexistente se rechaza");
 }
+
+/// Fase 8: auditoría avanzada — la cadena de `audit_log` se verifica de
+/// verdad (detecta manipulación directa en SQLite, no solo confía en el
+/// código de escritura).
+#[test]
+fn auditoria_lista_y_detecta_manipulacion_de_la_cadena() {
+    use app_lib::audit::{list, verify_chain};
+    use app_lib::commerce::{create_customer, CreateCustomerPayload};
+    use app_lib::sync::{self, HlcClock};
+
+    let conn = fresh_seeded_db();
+    let clock_a = HlcClock::new("t1:l1:sucursal-a");
+    let clock_b = HlcClock::new("t1:l1:sucursal-b");
+
+    // Generar al menos una entrada real de audit_log vía un conflicto LWW real.
+    let created = create_customer(&conn, &CreateCustomerPayload { name: "Cliente".into(), phone: None, email: None, tax_id: None }).unwrap();
+    let customer_id = created["customerId"].as_str().unwrap().to_string();
+    sync::enqueue_customer(&conn, &clock_a, &customer_id);
+    conn.execute("UPDATE customers SET name = 'Editado' WHERE id = ?1", rusqlite::params![customer_id]).unwrap();
+    sync::enqueue_customer(&conn, &clock_b, &customer_id);
+    // Aplicarse a sí mismo un evento con HLC menor para forzar que pierda (auto-conflicto controlado).
+    let pulled = sync::pull(&conn, "", 500);
+    let events: Vec<sync::SyncEvent> = serde_json::from_value(pulled["events"].clone()).unwrap();
+    let mut viejo = events[0].clone();
+    viejo.hlc = "00000000000000000001:0000000000:t1:l1:viejo".into(); // HLC menor a cualquier evento real: siempre pierde
+    sync::push(&conn, &clock_a, &[viejo]);
+
+    let entradas = list(&conn, Some("customer"), 100);
+    assert!(!entradas.as_array().unwrap().is_empty(), "hay al menos una entrada de auditoría para 'customer'");
+    assert!(entradas.as_array().unwrap().iter().all(|e| e["action"] == "sync.lww_overwrite"));
+
+    let verificacion_antes = verify_chain(&conn);
+    assert_eq!(verificacion_antes["valid"], true, "la cadena es válida antes de manipular nada");
+    assert!(verificacion_antes["totalRecords"].as_i64().unwrap() >= 1);
+
+    // Manipulación directa (bypaseando el código): cambiar un before_json ya escrito.
+    conn.execute("UPDATE audit_log SET before_json = '{\"manipulado\":true}' WHERE seq = 1", []).unwrap();
+    let verificacion_despues = verify_chain(&conn);
+    assert_eq!(verificacion_despues["valid"], false, "la manipulación directa se detecta");
+    assert_eq!(verificacion_despues["brokenAtSeq"], 1);
+}
