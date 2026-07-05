@@ -243,3 +243,65 @@ export interface OcrInvoiceLine {
 export function ocrInvoice(imageBase64: string, baseUrl = DEFAULT_BASE): Promise<{ supplier: string | null; lines: OcrInvoiceLine[] }> {
   return postJson(baseUrl, "/purchases/ocr", { imageBase64 });
 }
+
+// ---------------------------------------------------------------------------
+// Fase 7: reservaciones y delivery/para llevar
+// ---------------------------------------------------------------------------
+
+export interface Reservation {
+  reservationId: string;
+  cliente: string;
+  telefono: string | null;
+  personas: number;
+  horaReservada: number;
+  estado: "confirmada" | "sentada" | "cancelada" | "no_show";
+  notas: string | null;
+}
+
+export async function fetchReservations(baseUrl = DEFAULT_BASE): Promise<Reservation[]> {
+  const res = await fetch(`${baseUrl}/reservations`);
+  return res.json();
+}
+
+export function createReservation(
+  body: { customerName: string; customerPhone?: string; partySize?: number; reservedAt: number; notes?: string },
+  baseUrl = DEFAULT_BASE,
+): Promise<{ reservationId: string }> {
+  return postJson(baseUrl, "/reservations", body);
+}
+
+export function updateReservationStatus(id: string, status: Reservation["estado"], baseUrl = DEFAULT_BASE): Promise<unknown> {
+  return postJson(baseUrl, `/reservations/${id}/status`, { status });
+}
+
+export interface DeliveryOrder {
+  deliveryOrderId: string;
+  orderId: string;
+  canal: "para_llevar" | "domicilio";
+  cliente: string;
+  telefono: string | null;
+  direccion: string | null;
+  estado: string;
+}
+
+export async function fetchDeliveryOrders(baseUrl = DEFAULT_BASE): Promise<DeliveryOrder[]> {
+  const res = await fetch(`${baseUrl}/delivery-orders`);
+  return res.json();
+}
+
+export function createDeliveryOrder(
+  body: {
+    channel: "para_llevar" | "domicilio";
+    customerName: string;
+    customerPhone?: string;
+    address?: string;
+    items: { productId: string; cantidad: number }[];
+  },
+  baseUrl = DEFAULT_BASE,
+): Promise<{ deliveryOrderId: string; orderId: string; channel: string }> {
+  return postJson(baseUrl, "/delivery-orders", body);
+}
+
+export function updateDeliveryStatus(id: string, status: DeliveryOrder["estado"], baseUrl = DEFAULT_BASE): Promise<unknown> {
+  return postJson(baseUrl, `/delivery-orders/${id}/status`, { status });
+}

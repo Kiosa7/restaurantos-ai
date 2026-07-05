@@ -208,7 +208,7 @@ marketplace · Auditoría avanzada · Franquicias · API pública · Visión ava
 | **4 Base de datos** ✅ | Migraciones nuevas: menú/modificadores, mesas, comandas/tiempos, recetas/insumos, turnos/propinas, tablas CFDI | Esquema validado con datos reales (node:sqlite, servicio completo simulado) |
 | **5 Infraestructura** 🟡 | Hub server (HTTP+WS) ✅, pairing real ✅ (genera/persiste, enforcement ⛔), servido de PWA ✅ — updater y empaquetado ⛔ | "Instalación limpia en PC virgen < 30 min" SIN validar (falta `tauri build`, decisión de posponerlo ya tomada) |
 | **6 MVP** ✅ | Los 9 puntos de §10 abordados: comandas/inventario/caja/turnos/impresión(sw)/RBAC/backup/IA/pairing, todo verificado contra el binario real | **Un restaurante piloto opera un servicio de viernes completo sin tocar papel** — el software ya lo soporta; falta el piloto real (⛔ §11.4) para decir que se cumplió en la práctica |
-| **7 Comercial** 🟡 ⬅️ SIGUIENTE | CFDI (generación ✅, timbrado ⛔), delivery, reservas, promos, compras+OCR, clientes, reportes avanzados — todo excepto CFDI sin empezar | Primer cliente de pago facturando — lejos, falta timbrado real y el resto de módulos |
+| **7 Comercial** 🟡 ⬅️ SIGUIENTE | CFDI (generación ✅, timbrado ⛔), clientes ✅, fidelización ✅, promociones ✅, compras+proveedores+OCR ✅, reservaciones ✅, delivery/para llevar ✅ — faltan factura global/complemento de pago y reportes avanzados | Primer cliente de pago facturando — lejos, falta timbrado real; el resto de módulos de negocio ya opera contra el binario real |
 | **8 Enterprise** ⬜ | Multi-sucursal, plugins, API pública | Cadena 3+ sucursales sincronizando |
 
 Entregables documentales de la Fase 2 (crear en `docs/`): visión de producto ·
@@ -318,28 +318,66 @@ verificado contra el binario (`cargo test` + flujo WS+HTTP en vivo).
    estructural; falta portar `spikes/cfdi/client.mjs` (`FacturamaClient`/
    `SwSapienClient`) a Rust con `reqwest` (mismo patrón que `ai.rs`) y
    llamarlo tras `generate_cfdi`, actualizando `estado`/`uuid_fiscal`/`xml`.
-2. **Factura global y complemento de pago** — el modelo de datos (0015) ya
-   tiene `cfdi_pago_complementos` y soporta `sale_id IS NULL` (factura
-   global); falta la lógica que agrupa varias ventas del día.
-3. **Clientes** — la tabla `customers` existe (heredada de 0005 de
-   pos-inteligente) pero no se usa desde ninguna pantalla del restaurante
-   todavía; ligarla a `sales`/`cfdi_documents` (el RFC/nombre del receptor
-   hoy se captura suelto en cada factura, no contra un cliente guardado).
-4. **Inventario completo + compras/proveedores con OCR** — `purchases`/
-   `suppliers`/`supplier_prices` existen (heredados de 0005/0007) sin UI
-   restaurantera; el pipeline OCR de facturas con `llava` ya existe en
-   pos-inteligente (no portado aún).
-5. **Reservaciones** — módulo nuevo, sin modelo de datos todavía.
-6. **Delivery/para llevar** — módulo nuevo, sin modelo de datos todavía.
-7. **Promociones** — `promotions` existe (heredado de 0008) sin UI ni lógica
-   de aplicación en el checkout del restaurante.
-8. **Fidelización** — módulo nuevo.
-9. **Reportes avanzados** — hay 6 vistas de reporte (0016) ya explotadas por
-   el asistente de IA (§10 punto 8); "avanzados" implica UI de reportes
-   dedicada (gráficas, exportar), no vistas nuevas.
+2. **Factura global y complemento de pago** — PENDIENTE. El modelo de datos
+   (0015) ya tiene `cfdi_pago_complementos` y soporta `sale_id IS NULL`
+   (factura global); falta la lógica que agrupa varias ventas del día.
+   Complemento de pago requiere además un concepto de "venta a crédito"
+   (pago diferido) que no existe todavía en el dominio — ver bitácora
+   2026-07-05 para el desglose de por qué se dejó para después de
+   reservaciones/delivery (menor dependencia, mayor certeza de alcance).
+3. ✅ **Clientes** — `commerce.rs` (`create_customer`/`list_customers`)
+   sobre la tabla heredada `customers`; ligado al checkout
+   (`customerId` opcional en `/checkout`). Selector de cliente en
+   `CajaScreen`. Verificado contra el binario real (2026-07-04).
+4. ✅ **Inventario completo + compras/proveedores con OCR** — `create_supplier`/
+   `create_purchase` escriben `purchases`+`purchase_items`+
+   `inventory_movements` (mismo patrón que el descuento por receta);
+   `extract_invoice_from_image` (Rust, `llava:7b`) porta el pipeline OCR de
+   pos-inteligente. `ComprasPanel.tsx` en `CajaScreen`. Verificado contra el
+   binario real, incluida una llamada real a Ollama/llava (2026-07-04).
+5. ✅ **Reservaciones** — migración 0019 (`reservations`), CRUD completo en
+   `commerce.rs` (`create_reservation`/`list_reservations`/
+   `update_reservation_status`, estados `confirmada|sentada|cancelada|
+   no_show`), rutas `/reservations` y `/reservations/:id/status`,
+   `ReservacionesDeliveryPanel.tsx` en `CajaScreen`. Verificado contra el
+   binario real (2026-07-05).
+6. ✅ **Delivery/para llevar** — migración 0019 (`delivery_orders`).
+   DECISIÓN AUTÓNOMA: en vez de hacer `orders.table_id` nullable (SQLite no
+   tiene `ALTER COLUMN`; habría que recrear la tabla y arriesgar todo el
+   pipeline de KDS/checkout ya probado), se sembraron dos mesas virtuales
+   (`table-take-away` #90 "Para llevar", `table-delivery` #91 "Domicilio",
+   `zone='virtual'`, capacidad 999) y `create_delivery_order` llama
+   directamente a `handle_nueva_comanda` contra esa mesa — un pedido a
+   domicilio/para llevar reutiliza TODO el pipeline de comandas/KDS/cobro
+   sin cambios. `channel='domicilio'` exige `address`; `channel=
+   'para_llevar'` no. Rutas `/delivery-orders` y
+   `/delivery-orders/:id/status`. Verificado contra el binario real: se
+   crea el pedido, aparece en `/orders/open` con `mesa: 91/90` y el total
+   correcto, se cobra con el mismo `/checkout` que cualquier mesa, y los
+   estados (`recibido→preparando→listo→en_camino→entregado/cancelado`) se
+   actualizan (2026-07-05).
+7. ✅ **Promociones** — `commerce.rs::active_percent_off_promotion` aplica
+   la primera promoción `percent_off` activa sobre el total bruto del
+   cobro; UI de alta en `CajaScreen`. Documentado como v1: sin scope por
+   categoría, sin condiciones de monto/cantidad mínima, sin apilar varias
+   promociones (el modelo ya soporta reglas más ricas vía `rules_json` para
+   cuando se necesiten). Verificado contra el binario real (2026-07-04).
+8. ✅ **Fidelización** — 1 punto por cada $10 MXN gastados
+   (`floor(total_cents / 1000)`), 1 punto redimido = $1 MXN de descuento
+   (100 centavos); `accrue_loyalty`/`redeem_loyalty` en `commerce.rs`.
+   DECISIÓN AUTÓNOMA: promoción + puntos redimidos solo se aplican cuando
+   `splitMode == "completo"` (una sola venta) — combinarlos con cuenta
+   dividida queda documentado como limitación conocida, no bloqueante.
+   Verificado contra el binario real con matemática exacta ($140 bruto →
+   $119 con 15% de descuento, 11 puntos ganados) (2026-07-04).
+9. **Reportes avanzados** — PENDIENTE. Hay 6 vistas de reporte (0016) ya
+   explotadas por el asistente de IA (§10 punto 8); "avanzados" implica UI
+   de reportes dedicada (gráficas, exportar), no vistas nuevas.
 
 **Ninguno de estos bloquea empezar el siguiente**: son módulos
 independientes entre sí salvo (1)→(2) (timbrado antes que factura global).
+Con (3)-(8) cerrados, solo quedan (2) y (9) para cerrar Fase 7 además del
+timbrado bloqueado.
 
 ## 10.2 Fase 8 (Enterprise) — sin empezar
 
@@ -405,13 +443,12 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   (código + verificación real); lo que falta son 2 piezas que dependen de
   algo fuera del código (hardware físico) o de una decisión de ruptura
   deliberada (enforcement de pairing) — ver §10 y bitácora 2026-07-04.
-- 🟡 Fase 7 Comercial — ARRANCADA: generación de CFDI 4.0 real sobre el
-  modelo de 0015 (`POST /cfdi/generate`, folio/conceptos/totales correctos,
-  verificado contra el binario). ⛔ Timbrado real bloqueado (spike 3, sin
-  cuenta de PAC). El resto de Fase 7 (factura global, clientes, inventario+
-  compras+OCR, reservaciones, delivery, promociones, fidelización, reportes
-  avanzados) sin empezar — ver §10.1 para el desglose y orden sugerido
-  (2026-07-04).
+- 🟡 Fase 7 Comercial — AVANZADA: generación de CFDI 4.0 real (`POST
+  /cfdi/generate`), clientes, fidelización, promociones, compras+
+  proveedores+OCR, reservaciones y delivery/para llevar — los 7 módulos
+  completos y verificados contra el binario real. ⛔ Timbrado real
+  bloqueado (spike 3, sin cuenta de PAC). Faltan factura global/
+  complemento de pago y reportes avanzados — ver §10.1 (2026-07-05).
 - ⬜ Fase 8 Enterprise — sin empezar, ver §9 y §10.2.
 
 ## Bitácora
@@ -856,3 +893,95 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     §10.2 tiene el recordatorio de alcance de Fase 8. El timbrado real (1)
     es lo único bloqueado por un recurso externo; todo lo demás es
     diseño+código nuevo sin bloqueos técnicos identificados.
+- 2026-07-04: Fase 7 continuación (modo autónomo total) — clientes,
+  fidelización, promociones, compras+proveedores+OCR.
+  - **Módulo nuevo `commerce.rs`** sobre tablas heredadas de pos-inteligente
+    (`customers`/`suppliers`/`purchases`/`promotions`, 0005/0007/0008) que no
+    tenían UI restaurantera todavía.
+  - **Clientes**: `create_customer`/`list_customers`. `/checkout` ahora
+    acepta `customerId` opcional para ligar la venta a un cliente guardado.
+  - **Promociones**: `active_percent_off_promotion` aplica la primera
+    promoción `percent_off` activa sobre el total bruto. DECISIÓN AUTÓNOMA:
+    v1 solo soporta un tipo de regla (porcentaje sobre el total, sin scope
+    por categoría ni condiciones de monto mínimo ni apilar varias
+    promociones) — el modelo de datos ya soporta reglas más ricas vía
+    `rules_json` para cuando se necesiten; documentado como límite conocido,
+    no como omisión accidental.
+  - **Fidelización**: `accrue_loyalty`/`redeem_loyalty` — 1 punto por cada
+    $10 MXN gastados (`floor(total_cents / 1000)`), 1 punto redimido = $1
+    MXN de descuento (100 centavos). DECISIÓN AUTÓNOMA: promoción y puntos
+    redimidos solo se aplican cuando `splitMode == "completo"` (una sola
+    venta); combinar descuentos con cuenta dividida queda como limitación
+    documentada, no bloqueante para el resto de Fase 7.
+  - **Compras/proveedores**: `create_supplier`/`create_purchase` escriben
+    `purchases`+`purchase_items`+`inventory_movements` (mismo patrón que el
+    descuento de inventario por receta ya usado en Fase 6), sumando
+    inventario real, no solo un registro contable.
+  - **OCR de facturas de proveedor**: `extract_invoice_from_image` en
+    `ai.rs`, puerto verbatim del prompt/parsing de
+    `extractInvoiceFromImage.ts` de pos-inteligente a Rust usando
+    `llava:7b` vía `/api/chat` de Ollama (mismo patrón tolerante a fallos de
+    lectura: busca el primer `{` y el último `}`, filtra líneas inválidas).
+    DECISIÓN AUTÓNOMA: el resultado del OCR se muestra como referencia de
+    solo lectura en `ComprasPanel.tsx`, sin fuzzy-matching automático
+    nombre→`productId` todavía — documentado como pendiente, no bloqueante
+    (capturar la compra manual con el OCR de apoyo ya es una mejora real
+    sobre no tener OCR).
+  - `ComprasPanel.tsx` (proveedores, compra manual, subida de imagen para
+    OCR) y selector de cliente + input de puntos a redimir en `CajaScreen`.
+  - Verificado: `cargo test` 10/10 (nuevos
+    `cliente_promocion_y_puntos_se_aplican_en_el_cobro`,
+    `compra_a_proveedor_suma_inventario_real`), `npm test` 23/23,
+    typecheck/build limpios. Contra el binario real: cliente creado,
+    promoción 15% aplicada en un cobro real ($140 bruto → $119 con
+    descuento, 11 puntos ganados — matemática correcta), compra que sumó
+    inventario de verdad, y llamada real a Ollama/llava que devolvió JSON
+    estructurado de una factura.
+- 2026-07-05: Fase 7 continuación (modo autónomo total) — reservaciones y
+  delivery/para llevar.
+  - **Migración 0019** (`reservations` + `delivery_orders`).
+  - **Reservaciones**: CRUD completo en `commerce.rs`
+    (`create_reservation`/`list_reservations`/`update_reservation_status`),
+    estados `confirmada|sentada|cancelada|no_show` con validación de enum
+    (un estado inválido se rechaza). Rutas `/reservations` y
+    `/reservations/:id/status`.
+  - **Delivery/para llevar** — DECISIÓN AUTÓNOMA (diseño arquitectónico):
+    en vez de hacer `orders.table_id` nullable (SQLite no tiene
+    `ALTER COLUMN`; habría que recrear la tabla completa y arriesgar todo el
+    pipeline de KDS/checkout ya probado de punta a punta desde Fase 6), se
+    sembraron dos mesas virtuales en `seed.rs`
+    (`table-take-away` #90 "Para llevar", `table-delivery` #91 "Domicilio",
+    `zone='virtual'`, capacidad 999) y `create_delivery_order` llama
+    directamente a `handle_nueva_comanda` contra esa mesa. Un pedido a
+    domicilio o para llevar reutiliza TODO el pipeline de
+    comandas/KDS/cobro sin ningún cambio adicional — aparece en Caja y se
+    cobra exactamente como cualquier mesa física. `channel='domicilio'`
+    exige `address` no vacía (se rechaza si falta); `channel='para_llevar'`
+    no la requiere. Rutas `/delivery-orders` y
+    `/delivery-orders/:id/status`, estados
+    `recibido→preparando→listo→en_camino→entregado/cancelado`.
+  - `ReservacionesDeliveryPanel.tsx` (dos columnas: reservaciones con
+    formulario+lista+cambio de estado inline; delivery con selector de
+    canal, dirección condicional, formulario+lista+cambio de estado inline
+    con emoji 🚴/🥡) montado en `CajaScreen`.
+  - Corregidas dos aserciones obsoletas al aparecer las mesas virtuales: el
+    snapshot de respaldo pasó de 5 a 7 mesas sembradas
+    (`hub_test.rs`), y el conteo de migraciones TS pasó de 18 a 19
+    (`restaurantSchema.test.ts`).
+  - Verificado: `cargo test` 12/12 (nuevos
+    `reservacion_se_crea_y_cambia_de_estado`,
+    `pedido_a_domicilio_reutiliza_el_pipeline_de_comandas`), `npm test`
+    23/23, typecheck/build limpios. Contra el binario real (script Node
+    con 22 aserciones vía `fetch`, hub compilado y corriendo en :5190):
+    reservación creada→listada→estado inválido rechazado→cambio a
+    "sentada" persistido; pedido a domicilio sin dirección rechazado;
+    pedido a domicilio válido aparece en `/orders/open` con `mesa: 91` y
+    total correcto (3×$90.00); listado de delivery con canal/dirección
+    correctos; cambio de estado a "en_camino" persistido; `/checkout` del
+    pedido a domicilio cobra el total correcto igual que cualquier mesa;
+    pedido para llevar aparece con `mesa: 90`. Hub detenido limpiamente y
+    `.db` de desarrollo borrada tras la verificación.
+  - **Con esto, de los 9 puntos de §10.1 solo quedan pendientes**: (1)
+    timbrado real (⛔ bloqueado, sin cambio), (2) factura global/
+    complemento de pago, y (9) reportes avanzados. Continúa la sesión con
+    (2) y (9) para cerrar Fase 7, y después Fase 8 (§10.2).

@@ -157,6 +157,10 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/suppliers", get(get_suppliers).post(post_supplier))
         .route("/purchases", post(post_purchase))
         .route("/purchases/ocr", post(post_purchase_ocr))
+        .route("/reservations", get(get_reservations).post(post_reservation))
+        .route("/reservations/:id/status", post(post_reservation_status))
+        .route("/delivery-orders", get(get_delivery_orders).post(post_delivery_order))
+        .route("/delivery-orders/:id/status", post(post_delivery_order_status))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -238,6 +242,54 @@ async fn post_purchase_ocr(State(state): State<Arc<HubState>>, Json(body): Json<
     match crate::ai::extract_invoice_from_image(&state.http, image_base64).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => (axum::http::StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": e.0 }))).into_response(),
+    }
+}
+
+async fn get_reservations(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::commerce::list_reservations(&conn))
+}
+
+async fn post_reservation(State(state): State<Arc<HubState>>, Json(payload): Json<crate::commerce::CreateReservationPayload>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match crate::commerce::create_reservation(&conn, &payload) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn post_reservation_status(State(state): State<Arc<HubState>>, Path(id): Path<String>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    let Some(status) = body.get("status").and_then(|v| v.as_str()) else {
+        return domain_error_response("falta status".into());
+    };
+    let conn = state.db.lock().unwrap();
+    match crate::commerce::update_reservation_status(&conn, &id, status) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn get_delivery_orders(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::commerce::list_delivery_orders(&conn))
+}
+
+async fn post_delivery_order(State(state): State<Arc<HubState>>, Json(payload): Json<crate::commerce::CreateDeliveryOrderPayload>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match crate::commerce::create_delivery_order(&conn, &payload) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn post_delivery_order_status(State(state): State<Arc<HubState>>, Path(id): Path<String>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    let Some(status) = body.get("status").and_then(|v| v.as_str()) else {
+        return domain_error_response("falta status".into());
+    };
+    let conn = state.db.lock().unwrap();
+    match crate::commerce::update_delivery_status(&conn, &id, status) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
     }
 }
 

@@ -30,6 +30,8 @@ pub const TAX_IVA: &str = "tax-iva-16";
 pub const PROFILE_IVA: &str = "prof-iva";
 pub const UNIT_PIEZA: &str = "unit-pieza";
 pub const CFDI_ISSUER: &str = "cfdi-issuer-demo";
+pub const VIRTUAL_TABLE_TAKEAWAY: &str = "table-take-away";
+pub const VIRTUAL_TABLE_DELIVERY: &str = "table-delivery";
 
 /// course inferido por categoría (MVP: no hay columna `course` en `products`,
 /// ver docs/db/schema-overview-restaurante.md — limitación conocida).
@@ -180,17 +182,22 @@ pub fn seed(conn: &Connection, now: i64) {
 
     // Mesas (mismos ids/números/estados que el FloorPlan de Fase 3) ---------
     let tables = [
-        ("table-1", 1_i64, "libre", 4_i64),
-        ("table-2", 2, "ocupada", 2),
-        ("table-3", 3, "por_limpiar", 6),
-        ("table-4", 4, "libre", 4),
-        ("table-5", 5, "reservada", 8),
+        ("table-1", 1_i64, "libre", 4_i64, None::<&str>),
+        ("table-2", 2, "ocupada", 2, None),
+        ("table-3", 3, "por_limpiar", 6, None),
+        ("table-4", 4, "libre", 4, None),
+        ("table-5", 5, "reservada", 8, None),
+        // Mesas virtuales (Fase 7 §10.1 punto 6): delivery/para llevar
+        // reutilizan TODO el pipeline de comandas sin tocarlo — ver
+        // docs/db/migrations/0019_reservaciones_delivery.sql.
+        (VIRTUAL_TABLE_TAKEAWAY, 90, "libre", 999, Some("virtual")),
+        (VIRTUAL_TABLE_DELIVERY, 91, "libre", 999, Some("virtual")),
     ];
-    for (id, number, status, capacity) in tables {
+    for (id, number, status, capacity, zone) in tables {
         conn.execute(
-            "INSERT OR IGNORE INTO tables (id,tenant_id,location_id,number,capacity,status,created_at,updated_at,origin_node)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?7,?8)",
-            params![id, TENANT, LOCATION, number, capacity, status, now, NODE],
+            "INSERT OR IGNORE INTO tables (id,tenant_id,location_id,number,capacity,status,zone,created_at,updated_at,origin_node)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?8,?9)",
+            params![id, TENANT, LOCATION, number, capacity, status, zone, now, NODE],
         ).unwrap();
     }
 

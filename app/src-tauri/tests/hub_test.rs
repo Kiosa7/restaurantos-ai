@@ -266,7 +266,7 @@ fn snapshot_de_respaldo_incluye_catalogo_y_mesas_sembradas() {
     assert_eq!(snapshot["version"], "restaurantos-1");
     let tables = &snapshot["tables"];
     assert!(tables["products"].as_array().unwrap().len() >= 4, "incluye el menú sembrado");
-    assert!(tables["tables"].as_array().unwrap().len() == 5, "incluye las 5 mesas sembradas");
+    assert!(tables["tables"].as_array().unwrap().len() == 7, "incluye las 5 mesas + 2 virtuales (para llevar/domicilio, Fase 7)");
     assert!(tables["employees"].as_array().unwrap().iter().any(|e| e["id"] == seed::EMPLOYEE_CAJERO));
 }
 
@@ -400,4 +400,74 @@ fn compra_a_proveedor_suma_inventario_real() {
 
     let after: f64 = conn.query_row("SELECT qty FROM inventory WHERE product_id='insumo-carne-pastor'", [], |r| r.get(0)).unwrap();
     assert_eq!(after, before + 10.0, "la compra sumó 10kg de carne al inventario real");
+}
+
+/// Fase 7 §10.1 punto 5: reservaciones con cambio de estado real.
+#[test]
+fn reservacion_se_crea_y_cambia_de_estado() {
+    use app_lib::commerce::*;
+
+    let conn = fresh_seeded_db();
+    let payload: CreateReservationPayload = serde_json::from_value(json!({
+        "customerName": "Familia Gómez", "customerPhone": "5511223344", "partySize": 5, "reservedAt": 1_800_000_000_000i64
+    })).unwrap();
+    let created = create_reservation(&conn, &payload).unwrap();
+    let id = created["reservationId"].as_str().unwrap().to_string();
+
+    let list = list_reservations(&conn);
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["cliente"], "Familia Gómez");
+    assert_eq!(list[0]["estado"], "confirmada");
+
+    update_reservation_status(&conn, &id, "sentada").unwrap();
+    let updated = list_reservations(&conn);
+    assert_eq!(updated[0]["estado"], "sentada");
+
+    assert!(update_reservation_status(&conn, &id, "estado_invalido").is_err());
+}
+
+/// Fase 7 §10.1 punto 6: un pedido a domicilio reutiliza TODO el pipeline de
+/// comandas (mesa virtual → order_items reales → aparece en /orders/open).
+#[test]
+fn pedido_a_domicilio_reutiliza_el_pipeline_de_comandas() {
+    use app_lib::commands::*;
+    use app_lib::commerce::*;
+
+    let conn = fresh_seeded_db();
+
+    let payload: CreateDeliveryOrderPayload = serde_json::from_value(json!({
+        "channel": "domicilio",
+        "customerName": "Laura Ramírez",
+        "customerPhone": "5533445566",
+        "address": "Calle Falsa 123, CDMX",
+        "items": [{ "productId": "mi_tacos_pastor", "cantidad": 3 }]
+    })).unwrap();
+    let created = create_delivery_order(&conn, &payload).unwrap();
+    let order_id = created["orderId"].as_str().unwrap().to_string();
+
+    // Sin dirección, a domicilio debe rechazarse.
+    let sin_direccion: CreateDeliveryOrderPayload = serde_json::from_value(json!({
+        "channel": "domicilio", "customerName": "X", "items": [{ "productId": "mi_flan", "cantidad": 1 }]
+    })).unwrap();
+    assert!(create_delivery_order(&conn, &sin_direccion).is_err());
+
+    // La orden real existe y aparece en /orders/open (mesa virtual 91).
+    let open = open_orders_json(&conn);
+    let found = open.as_array().unwrap().iter().find(|o| o["orderId"] == order_id).expect("debe aparecer en comandas abiertas");
+    assert_eq!(found["mesa"], 91);
+    assert_eq!(found["totalCents"], 9000 * 3);
+
+    let list = list_delivery_orders(&conn);
+    assert_eq!(list[0]["canal"], "domicilio");
+    assert_eq!(list[0]["direccion"], "Calle Falsa 123, CDMX");
+
+    let delivery_id = list[0]["deliveryOrderId"].as_str().unwrap();
+    update_delivery_status(&conn, delivery_id, "en_camino").unwrap();
+    let updated = list_delivery_orders(&conn);
+    assert_eq!(updated[0]["estado"], "en_camino");
+
+    // El pedido se cobra igual que cualquier comanda (checkout normal).
+    let checkout_payload: CheckoutPayload = serde_json::from_value(json!({ "orderId": order_id, "paymentMethod": "tarjeta" })).unwrap();
+    let sale = handle_checkout(&conn, &checkout_payload).unwrap();
+    assert_eq!(sale["totalCents"], 9000 * 3);
 }

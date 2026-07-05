@@ -13,11 +13,11 @@ function freshDb() {
   return db;
 }
 
-describe("Esquema restaurantero (0012-0018) contra node:sqlite real", () => {
-  it("aplica las 18 migraciones sin error y siembra el demo", () => {
+describe("Esquema restaurantero (0012-0019) contra node:sqlite real", () => {
+  it("aplica las 19 migraciones sin error y siembra el demo", () => {
     const db = freshDb();
     const row = db.prepare(`SELECT COUNT(*) AS n FROM schema_migrations`).get() as { n: number };
-    expect(row.n).toBe(18);
+    expect(row.n).toBe(19);
     const table = db.prepare(`SELECT status FROM tables WHERE id = ?`).get(ORG.table7) as { status: string };
     expect(table.status).toBe("libre");
   });
