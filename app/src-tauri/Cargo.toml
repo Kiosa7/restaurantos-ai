@@ -40,5 +40,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 regex = "1"
 sha2 = "0.10"
 
+# Asistente IA v1 (Fase 6 §10.8): cliente HTTP hacia Ollama local (plano
+# http://localhost:11434, sin TLS — por eso sin features de TLS de reqwest).
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+
 [dev-dependencies]
 tokio-tungstenite = "0.24"

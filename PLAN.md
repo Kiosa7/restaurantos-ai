@@ -276,10 +276,15 @@ salvo donde se anota dependencia):
    `.restaurantosbackup`; restaurar DESCIFRA y previsualiza el contenido pero
    NO reescribe el hub en vivo todavía (reimportar de forma transaccional y
    segura es más grande, diferido a Fase 7).
-8. **Asistente IA v1**: conectar `OllamaAIClient` de pos-inteligente contra
-   las vistas nuevas de 0016 (`v_dish_sales_margin`, `v_tips_by_shift`, etc.)
-   con las tools que faltan por catalogar en un
-   `docs/ai/tools-conversacional-restaurante.md` (no existe aún).
+8. ✅ **Asistente IA v1** — DECISIÓN AUTÓNOMA: NO se portó `OllamaAIClient.ts`
+   al navegador; el bucle de tool-calling se implementó en el HUB
+   (`app/src-tauri/src/ai.rs`, `POST /ai/chat`) porque el permiso/tenant debe
+   inyectarse server-side y porque el lock de la BD solo puede protegerse de
+   quedar retenido durante la espera de red si el que espera es el mismo
+   proceso que la tiene. 5 tools sobre las vistas de 0016
+   (`docs/ai/tools-conversacional-restaurante.md`, nuevo): márgenes por
+   platillo, cola de cocina, tiempo de preparación, estado de mesas, propinas
+   por turno. `AsistentePanel.tsx` en Caja con preguntas sugeridas.
 9. **Pairing real de dispositivos** (hoy `/pair` es un placeholder, ver
    spike-5): QR/PIN generado en el hub, `deviceId` persistente, rol
    asociado.
@@ -331,15 +336,17 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   validado (protocolo + PWA estática, 2/2 tests). Pairing MVP. ⛔ empaquetado
   real (MSI/NSIS), updater y resource bundling de la PWA en producción
   pendientes (2026-07-03) — ver docs/spikes/spike-5-hub-rust.md.
-- 🟡 Fase 6 MVP — 7/9 puntos de §10 completos: (1) hub persistido en SQLite,
+- 🟡 Fase 6 MVP — 8/9 puntos de §10 completos: (1) hub persistido en SQLite,
   (2) Caja funcional (ver/dividir/cobrar), (3) descuento de inventario por
   receta como caso de uso real, (4) impresión ESC/POS en software (⛔ falta
   hardware), (5) turnos/propinas en UI, (6) RBAC/PIN (verificado en el hub,
   no en el cliente), (7) backup cifrado (exporta real, restaura con preview
-  sin reescribir el hub aún). Mesero↔hub↔KDS↔Caja funcionando de punta a
-  punta contra el binario real (comanda→bump→cobro→turno cerrado con propina
-  repartida, verificado con scripts WS+HTTP en vivo, no solo tests).
-  Falta: (8) asistente IA v1, (9) pairing real (2026-07-04).
+  sin reescribir el hub aún), (8) asistente IA v1 (5 tools, verificado contra
+  Ollama real Y verificado que NO bloquea el WS mientras piensa).
+  Mesero↔hub↔KDS↔Caja funcionando de punta a punta contra el binario real
+  (comanda→bump→cobro→turno cerrado con propina repartida, verificado con
+  scripts WS+HTTP en vivo, no solo tests).
+  Falta: (9) pairing real (2026-07-04).
 - ⬜ Fases 7–8 — sin empezar, ver §9.
 
 ## Bitácora
@@ -659,3 +666,41 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     (7 productos, 5 mesas, 3 empleados).
   - Próximo: puntos 8 (asistente IA v1), 9 (pairing real) de §10, luego
     Fases 7–8.
+- 2026-07-04: Fase 6 punto 8 (asistente IA v1) completado en modo autónomo total.
+  - DECISIÓN AUTÓNOMA: NO se portó `OllamaAIClient.ts` (fetch desde el
+    navegador) de pos-inteligente. El bucle completo de tool-calling
+    (pregunta → Ollama decide tool → hub ejecuta vista → resultado de vuelta
+    a Ollama → respuesta final) se implementó en Rust
+    (`app/src-tauri/src/ai.rs`, `reqwest` como cliente HTTP hacia
+    `localhost:11434`) por DOS razones: (1) la inyección de tenant/permisos
+    server-side que el ADR exige solo es posible si el núcleo (hub) es quien
+    arma la conversación, no el navegador; (2) la regla de oro "la IA nunca
+    bloquea el camino crítico" solo se puede GARANTIZAR si el lock de SQLite
+    se toma/suelta en el mismo proceso que hace el `.await` a Ollama — el
+    código toma el lock SOLO para ejecutar la tool (síncrono, rápido) y lo
+    suelta antes de cualquier espera de red.
+  - 5 tools nuevas sobre las vistas de 0016 (documentadas en
+    `docs/ai/tools-conversacional-restaurante.md`, nuevo): `get_dish_margins`,
+    `get_kitchen_queue`, `get_dish_prep_time`, `get_tables_status`,
+    `get_tips_by_shift`. Modelo: `qwen2.5:7b` (mismo del spike 4).
+  - `AsistentePanel.tsx` (nuevo, en `CajaScreen`): preguntas sugeridas +
+    input libre, muestra la respuesta y qué tool se usó como cita de fuente
+    (mismo principio de trazabilidad que pos-inteligente).
+  - **Verificado contra Ollama REAL, no un mock** (`curl /ai/chat`):
+    "¿Qué mesas están libres ahora?" → citó `get_tables_status`, respondió
+    correctamente "mesa 1 y mesa 4" (coincide con el seed) en 14s.
+    "¿Qué platillo deja más margen?" → citó `get_dish_margins`, respondió
+    "Quesadilla de flor de calabaza" (correcto: es la única sin receta, así
+    que su margen es el precio completo) en 3.8s.
+  - **Verificado el requisito arquitectónico más importante de este punto**:
+    un script dispara una pregunta a la IA (que tarda ~4s) y, 200ms después,
+    manda un comando `nueva_comanda` real por WS — el comando se confirmó en
+    **6ms**, sin esperar a que la IA terminara. La regla "la IA nunca bloquea
+    el camino crítico" quedó demostrada, no solo documentada.
+  - Verificado: `cargo test` 6/6 (sin regresión), `npm test` 23/23,
+    typecheck/build limpios.
+  - Pendiente (documentado en el doc de tools, no bloquea): tools sin
+    parámetros aún (fechas, límites), sin permisos por tool, sin
+    `ai_chat_log` (historial se pierde entre reinicios).
+  - Próximo: punto 9 (pairing real de dispositivos) de §10, último pendiente
+    de Fase 6, luego Fases 7–8.

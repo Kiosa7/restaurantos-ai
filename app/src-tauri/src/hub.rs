@@ -60,12 +60,13 @@ struct IncomingCommand {
 pub struct HubState {
     pub db: Mutex<Connection>,
     tx: broadcast::Sender<HubEvent>,
+    http: reqwest::Client,
 }
 
 impl HubState {
     pub fn new(conn: Connection) -> Arc<Self> {
         let (tx, _rx) = broadcast::channel(1024);
-        Arc::new(Self { db: Mutex::new(conn), tx })
+        Arc::new(Self { db: Mutex::new(conn), tx, http: reqwest::Client::new() })
     }
 }
 
@@ -146,6 +147,7 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/shifts/close", post(post_shift_close))
         .route("/tips/summary", get(get_tips_summary))
         .route("/backup/export", get(get_backup_export))
+        .route("/ai/chat", post(post_ai_chat))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -194,6 +196,19 @@ async fn get_open_orders(State(state): State<Arc<HubState>>) -> impl IntoRespons
 async fn get_backup_export(State(state): State<Arc<HubState>>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
     Json(crate::backup::build_snapshot(&conn, now_ms() as i64))
+}
+
+async fn post_ai_chat(State(state): State<Arc<HubState>>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    let Some(question) = body.get("question").and_then(|v| v.as_str()) else {
+        return domain_error_response("falta question".into());
+    };
+    // OJO: NO se toma el lock de `state.db` aquí — `handle_chat` lo toma y
+    // suelta internamente solo para las tools, nunca durante el `.await` a
+    // Ollama (regla de oro: la IA no bloquea el camino crítico de mesero/KDS).
+    match crate::ai::handle_chat(&state.db, &state.http, question).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (axum::http::StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": e.0 }))).into_response(),
+    }
 }
 
 fn domain_error_response(msg: String) -> axum::response::Response {

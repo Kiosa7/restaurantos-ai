@@ -102,3 +102,13 @@ export async function fetchBackupSnapshot(baseUrl = DEFAULT_BASE): Promise<unkno
   const res = await fetch(`${baseUrl}/backup/export`);
   return res.json();
 }
+
+export interface AiChatResponse {
+  answer: string;
+  toolsUsadas: string[];
+}
+
+/** Asistente conversacional v1 (Fase 6 §10.8) — el LLM nunca escribe SQL, solo elige tools. */
+export function askAssistant(question: string, baseUrl = DEFAULT_BASE): Promise<AiChatResponse> {
+  return postJson(baseUrl, "/ai/chat", { question });
+}
