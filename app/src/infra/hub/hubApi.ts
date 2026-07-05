@@ -379,3 +379,23 @@ export async function fetchReportsDashboard(baseUrl = DEFAULT_BASE): Promise<Rep
   const res = await fetch(`${baseUrl}/reports/dashboard`);
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Fase 8: registro de plugins (docs/permisos-plugins.md)
+// ---------------------------------------------------------------------------
+
+export interface Plugin {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+}
+
+export async function fetchPlugins(baseUrl = DEFAULT_BASE): Promise<Plugin[]> {
+  const res = await fetch(`${baseUrl}/plugins`);
+  return res.json();
+}
+
+export function togglePlugin(id: string, enabled: boolean, baseUrl = DEFAULT_BASE): Promise<{ id: string; enabled: boolean }> {
+  return postJson(baseUrl, `/plugins/${id}/toggle`, { enabled });
+}

@@ -168,6 +168,8 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/reports/dashboard", get(get_reports_dashboard))
         .route("/sync/pull", get(get_sync_pull))
         .route("/sync/push", post(post_sync_push))
+        .route("/plugins", get(get_plugins))
+        .route("/plugins/:id/toggle", post(post_plugin_toggle))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -238,6 +240,24 @@ struct SyncPushBody {
 async fn post_sync_push(State(state): State<Arc<HubState>>, Json(body): Json<SyncPushBody>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
     Json(crate::sync::push(&conn, &state.sync_clock, &body.events))
+}
+
+async fn get_plugins(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::plugins::list(&conn))
+}
+
+#[derive(Deserialize)]
+struct TogglePluginBody {
+    enabled: bool,
+}
+
+async fn post_plugin_toggle(State(state): State<Arc<HubState>>, Path(id): Path<String>, Json(body): Json<TogglePluginBody>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match crate::plugins::set_enabled(&conn, &id, body.enabled) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
 }
 
 async fn get_customers(State(state): State<Arc<HubState>>) -> impl IntoResponse {

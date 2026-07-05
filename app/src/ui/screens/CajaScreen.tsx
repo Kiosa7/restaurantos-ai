@@ -3,7 +3,7 @@ import { Button, Card, Input, Segmented, useToast } from "@ui/components/ui";
 import { SplitBillSheet, TipSelector, type SplitMode } from "@ui/components/restaurant";
 import { formatMoney, cents } from "@domain/money";
 import { HubClient } from "@infra/hub/hubClient";
-import { checkout, closeShift, fetchCustomers, fetchOpenOrders, generateCfdi, openShift, type Customer, type OpenOrder } from "@infra/hub/hubApi";
+import { checkout, closeShift, fetchCustomers, fetchOpenOrders, fetchPlugins, generateCfdi, openShift, type Customer, type OpenOrder, type Plugin } from "@infra/hub/hubApi";
 import { cuentaTicket } from "@infra/print/tickets";
 import { printTicket } from "@infra/print/printClient";
 import { BackupPanel } from "@ui/components/BackupPanel";
@@ -13,6 +13,7 @@ import { ComprasPanel } from "@ui/components/ComprasPanel";
 import { ReservacionesDeliveryPanel } from "@ui/components/ReservacionesDeliveryPanel";
 import { FacturaGlobalPanel } from "@ui/components/FacturaGlobalPanel";
 import { ReportesPanel } from "@ui/components/ReportesPanel";
+import { PluginsPanel } from "@ui/components/PluginsPanel";
 
 // MVP (Fase 6 §10.5): un solo mesero de turno del seed demo. RBAC/PIN (§10.6)
 // ya autentica a quien opera la Caja (ver PinGate en App.tsx), pero el turno
@@ -39,6 +40,7 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerId, setCustomerId] = useState<string>("");
   const [redeemPoints, setRedeemPoints] = useState("");
+  const [plugins, setPlugins] = useState<Plugin[]>([]);
   const hubRef = useRef<HubClient | null>(null);
   const { toast } = useToast();
 
@@ -46,14 +48,24 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
     setOrders(await fetchOpenOrders(apiUrl));
   }
 
+  async function refrescarPlugins() {
+    setPlugins(await fetchPlugins(apiUrl));
+  }
+
   useEffect(() => {
     refrescarOrdenes();
     fetchCustomers(apiUrl).then(setCustomers);
+    refrescarPlugins();
     const client = new HubClient({ url: `${hubUrl}?role=caja&device=caja-1`, onEvent: () => refrescarOrdenes() });
     hubRef.current = client;
     return () => client.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hubUrl, apiUrl]);
+
+  /** Fase 8 §10.2 punto 2: un plugin apagado (o aún no cargado) oculta su panel. */
+  function pluginHabilitado(id: string): boolean {
+    return plugins.find((p) => p.id === id)?.enabled ?? false;
+  }
 
   const clienteElegido = customers.find((c) => c.customerId === customerId) ?? null;
 
@@ -241,18 +253,26 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
         )}
       </Card>
 
-      <div className="md:col-span-2">
-        <ReservacionesDeliveryPanel apiUrl={apiUrl} />
-      </div>
-      <div className="md:col-span-2">
-        <ComprasPanel apiUrl={apiUrl} />
-      </div>
-      <div className="md:col-span-2">
-        <FacturaGlobalPanel apiUrl={apiUrl} />
-      </div>
-      <div className="md:col-span-2">
-        <ReportesPanel apiUrl={apiUrl} />
-      </div>
+      {pluginHabilitado("reservaciones_delivery") && (
+        <div className="md:col-span-2">
+          <ReservacionesDeliveryPanel apiUrl={apiUrl} />
+        </div>
+      )}
+      {pluginHabilitado("compras_ocr") && (
+        <div className="md:col-span-2">
+          <ComprasPanel apiUrl={apiUrl} />
+        </div>
+      )}
+      {pluginHabilitado("factura_global") && (
+        <div className="md:col-span-2">
+          <FacturaGlobalPanel apiUrl={apiUrl} />
+        </div>
+      )}
+      {pluginHabilitado("reportes_avanzados") && (
+        <div className="md:col-span-2">
+          <ReportesPanel apiUrl={apiUrl} />
+        </div>
+      )}
       <div className="md:col-span-2">
         <AsistentePanel apiUrl={apiUrl} />
       </div>
@@ -261,6 +281,9 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
       </div>
       <div className="md:col-span-2">
         <BackupPanel apiUrl={apiUrl} />
+      </div>
+      <div className="md:col-span-2">
+        <PluginsPanel apiUrl={apiUrl} onChange={refrescarPlugins} />
       </div>
     </div>
   );

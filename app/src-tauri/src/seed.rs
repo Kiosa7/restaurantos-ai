@@ -227,5 +227,27 @@ pub fn seed(conn: &Connection, now: i64) {
         params![CFDI_ISSUER, TENANT, now, node()],
     ).unwrap();
 
+    // Plugins (Fase 8 §10.2 punto 2, docs/permisos-plugins.md) — la tabla ya
+    // existía desde 0008 (heredada de pos-inteligente) para esto exacto, sin
+    // usar hasta ahora. v1: los módulos de Fase 7 que un restaurante puede
+    // razonablemente no necesitar (dogfooding del modelo: "mesero/KDS/caja
+    // son, arquitectónicamente, plugins del núcleo"), no un runtime de
+    // plugins de terceros — por eso `signature` queda NULL (es para
+    // verificar plugins firmados de terceros, aplicable cuando exista esa
+    // frontera dura; estos son de primera parte).
+    for (id, name, description) in [
+        ("reservaciones_delivery", "Reservaciones y delivery", "Panel de reservaciones y pedidos a domicilio/para llevar"),
+        ("compras_ocr", "Compras y proveedores", "Registro de compras a proveedor, con OCR de facturas de apoyo"),
+        ("factura_global", "Factura global", "Agrupar varias ventas del día sin CFDI individual en una sola factura"),
+        ("reportes_avanzados", "Reportes avanzados", "Panel de gráficas/tablas de ventas, margen, rotación y propinas"),
+    ] {
+        let manifest = format!(r#"{{"description":"{description}","extensionPoints":["ui_panel"]}}"#);
+        conn.execute(
+            "INSERT OR IGNORE INTO plugins (id,name,version,core_compat,manifest_json,enabled,installed_at,updated_at,origin_node)
+             VALUES (?1,?2,'1.0.0','^1.0',?3,1,?4,?4,?5)",
+            params![id, name, manifest, now, node()],
+        ).unwrap();
+    }
+
     log::info!("hub: seed demo aplicado (idempotente)");
 }

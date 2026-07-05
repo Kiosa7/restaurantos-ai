@@ -437,14 +437,34 @@ Fase 2 por falta de cuenta de PAC).
    nuevos para poder correr dos hubs en la misma máquina) sincronizando
    entre sí de verdad, no una simulación en memoria como en pos-inteligente.
    Verificado contra los binarios reales (2026-07-05).
-2. **Plugins/marketplace** — el modelo ya está documentado en
-   `docs/permisos-plugins.md` desde Fase 2; implementar el registro
-   enable/disable de los módulos de Fase 7 (dogfooding del propio modelo:
-   "mesero/KDS/caja son, arquitectónicamente, plugins del núcleo"). Un
-   runtime de plugins de terceros fuera de proceso (con la frontera dura
-   que describe el doc) es alcance posterior — no se necesita para que el
-   valor real de "un restaurante que no hace delivery no ve ese panel"
-   exista hoy.
+2. ✅ **Plugins/marketplace** — usa la tabla `plugins` que YA EXISTÍA desde
+   0008 (heredada de pos-inteligente, con `manifest_json`/`version`/
+   `core_compat`/`signature`, nunca usada hasta ahora — se descubrió al
+   intentar crear una migración nueva y toparse con "table plugins has no
+   column named description"). Módulo `plugins.rs`
+   (`list`/`set_enabled`) + rutas `GET /plugins` y
+   `POST /plugins/:id/toggle`. 4 plugins v1 sembrados (todos habilitados
+   por default, mismo comportamiento que antes de que existiera el
+   registro): `reservaciones_delivery`, `compras_ocr`, `factura_global`,
+   `reportes_avanzados` — los módulos de Fase 7 que ya son paneles
+   independientes del núcleo. `CajaScreen` lee `GET /plugins` y solo
+   renderiza cada panel si su plugin está habilitado; `PluginsPanel.tsx`
+   nuevo con checkboxes para encenderlos/apagarlos en vivo.
+   DECISIÓN AUTÓNOMA (alcance v1): promociones/fidelización NO se
+   volvieron plugin-gateables porque viven inline en el checkout de
+   `CajaScreen` (no son un panel separado) — desacoplarlas requeriría
+   tocar el flujo de cobro ya probado de punta a punta; documentado como
+   pendiente, no bloqueante. Un runtime de plugins de TERCEROS fuera de
+   proceso (con la "frontera dura" que describe el doc: IPC/sandboxing) es
+   alcance posterior — no se necesita para que el valor real de "un
+   restaurante que no hace delivery no ve ese panel" exista hoy; sería
+   prematuro construir esa frontera sin un plugin de tercero real que la
+   necesite.
+   Verificado contra el binario real, incluida una revisión visual con
+   Playwright: se deshabilitó "Reservaciones y delivery" por HTTP, se
+   confirmó que su panel desaparece de la UI, y se reactivó desde el
+   propio checkbox de la UI (no por HTTP) confirmando que reaparece
+   (2026-07-05).
 3. **Auditoría avanzada** — `audit_log` (0001, hash-encadenado) ya se
    usa de verdad desde el punto 1 (`sync.lww_overwrite`); falta una UI
    dedicada para consultarlo (no solo que exista la tabla).
@@ -522,11 +542,12 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   que solo da un timbrado real) — ninguno de los dos es un hueco de
   diseño, son dependencias externas documentadas. Fase 7 no tiene más
   trabajo pendiente que no dependa de esos dos bloqueos (2026-07-05).
-- 🟡 Fase 8 Enterprise — AVANZANDO: multi-sucursal (sync HLC/outbox) ✅,
-  puerto real (no simulado) del protocolo de pos-inteligente, verificado
-  con dos binarios reales sincronizando entre sí. Faltan plugins/
-  marketplace, auditoría avanzada (UI), API pública, franquicias y visión
-  avanzada — ver §10.2 (2026-07-05).
+- 🟡 Fase 8 Enterprise — AVANZANDO: multi-sucursal (sync HLC/outbox) ✅
+  (puerto real, no simulado, verificado con dos binarios sincronizando
+  entre sí) y plugins/marketplace ✅ (registro enable/disable sobre la
+  tabla `plugins` heredada de 0008, nunca usada hasta ahora; 4 paneles de
+  Fase 7 ahora apagables en vivo). Faltan auditoría avanzada (UI), API
+  pública, franquicias y visión avanzada — ver §10.2 (2026-07-05).
 
 ## Bitácora
 
@@ -1232,3 +1253,63 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     marketplace, auditoría avanzada (UI sobre el `audit_log` que ya se usa
     de verdad desde este punto), API pública, franquicias, visión
     avanzada — ver §10.2 para el desglose y el orden sugerido.
+- 2026-07-05: Fase 8 (Enterprise) — plugins/marketplace.
+  - **Hallazgo antes de escribir código**: al ir a crear una migración
+    nueva para un registro de plugins, `cargo test` falló con "table
+    plugins has no column named description" — ya existía una tabla
+    `plugins` desde 0008 (heredada de pos-inteligente), con un esquema más
+    rico que el que se iba a crear desde cero (`manifest_json`, `version`,
+    `core_compat`, `signature`), sin que ningún código la hubiera usado
+    todavía. Se descartó la migración nueva (0020, redundante) y se
+    reescribió `plugins.rs` contra el esquema ya existente — mejor
+    resultado y menos código que si no se hubiera revisado antes de
+    escribir.
+  - **`plugins.rs`** (nuevo): `list` (lee `id`/`name`/`enabled` +
+    `description` extraída de `manifest_json`) y `set_enabled`
+    (valida que el id exista, actualiza y sella `updated_at`). Rutas
+    `GET /plugins` y `POST /plugins/:id/toggle`.
+  - **4 plugins v1 sembrados**, todos `enabled=1` por default (mismo
+    comportamiento que antes de que existiera el registro):
+    `reservaciones_delivery`, `compras_ocr`, `factura_global`,
+    `reportes_avanzados` — los módulos de Fase 7 que ya son paneles
+    independientes del núcleo (dogfooding real del modelo de
+    `docs/permisos-plugins.md`: "mesero/KDS/caja son, arquitectónicamente,
+    plugins del núcleo"). `signature` queda `NULL` a propósito: es para
+    verificar plugins de terceros firmados que todavía no existen, no
+    aplica a estos 4 de primera parte.
+  - **`CajaScreen`** ahora hace `GET /plugins` al montar y solo renderiza
+    cada uno de los 4 paneles si su plugin está habilitado.
+    **`PluginsPanel.tsx`** (nuevo): lista con checkbox por plugin, llama a
+    `POST /plugins/:id/toggle` y refresca — un dueño puede apagar
+    "Reservaciones y delivery" si su restaurante no las ofrece, sin tocar
+    código.
+  - DECISIÓN AUTÓNOMA (alcance v1): promociones/fidelización NO se
+    volvieron plugin-gateables — viven inline en el checkout de
+    `CajaScreen` (selector de cliente + puntos a redimir dentro del propio
+    flujo de cobro), no son un panel separado; desacoplarlas arriesgaría
+    el flujo de cobro ya probado de punta a punta desde Fase 6. Un runtime
+    de plugins de TERCEROS fuera de proceso (la "frontera dura" que
+    describe el doc: sin acceso directo a SQLite/proceso Rust, solo a
+    puertos y bus de eventos) queda como alcance posterior explícito —
+    construir esa frontera hoy sería diseñar en el vacío sin un plugin de
+    tercero real que la necesite.
+  - Verificado: `cargo test` 16/16 (nuevo
+    `plugins_se_listan_sembrados_y_se_pueden_deshabilitar`), `npm test`
+    23/23, typecheck/build limpios. Contra el binario real: se deshabilitó
+    "Reservaciones y delivery" por HTTP y se confirmó que persiste; **más
+    una revisión visual real con Playwright** (no solo HTTP): el panel de
+    Reservaciones desaparece de la pantalla de Caja al deshabilitarse, y
+    reaparece al reactivar el plugin desde el propio checkbox de la UI (no
+    por HTTP) — la nota de bug de la sesión de reportes avanzados sigue
+    aplicando: la revisión visual encuentra cosas que HTTP+tests no ven,
+    en este caso confirmando que sí funciona, no un bug.
+  - Nota aparte (no relacionada con plugins): al reiniciar el hub para
+    esta verificación, una primera instancia terminó sola con exit code 0
+    sin panic en el log, justo tras una petición — no se reprodujo en el
+    segundo intento (mismo comando) y la funcionalidad se verificó
+    exitosamente ahí. Posible fluke del entorno de desarrollo (Windows/
+    Git Bash) más que un bug del código; queda anotado por transparencia,
+    no se investigó a fondo porque no volvió a ocurrir y no bloqueó la
+    verificación.
+  - Sigue pendiente de Fase 8: auditoría avanzada (UI), API pública,
+    franquicias, visión avanzada — ver §10.2.

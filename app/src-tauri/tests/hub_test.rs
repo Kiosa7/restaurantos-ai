@@ -659,3 +659,25 @@ fn sync_multi_sucursal_converge_por_estrategia_de_agregado() {
     let conflictos_a: i64 = sucursal_a.query_row("SELECT COUNT(*) FROM audit_log WHERE action = 'sync.lww_overwrite'", [], |r| r.get(0)).unwrap();
     assert!(conflictos_a >= 1, "el valor perdedor del LWW queda trazado en audit_log, nunca se descarta en silencio");
 }
+
+/// Fase 8: registro de plugins (dogfooding del modelo de docs/permisos-plugins.md)
+/// sobre la tabla `plugins` heredada de pos-inteligente desde 0008.
+#[test]
+fn plugins_se_listan_sembrados_y_se_pueden_deshabilitar() {
+    use app_lib::plugins::{list, set_enabled};
+
+    let conn = fresh_seeded_db();
+    let listados = list(&conn);
+    let arr = listados.as_array().unwrap();
+    assert_eq!(arr.len(), 4, "los 4 plugins v1 quedan sembrados");
+    assert!(arr.iter().all(|p| p["enabled"] == true), "todos habilitados por default (mismo comportamiento que antes del registro)");
+
+    let toggled = set_enabled(&conn, "reservaciones_delivery", false).expect("debe poder deshabilitarse");
+    assert_eq!(toggled["enabled"], false);
+
+    let listados2 = list(&conn);
+    let reservaciones = listados2.as_array().unwrap().iter().find(|p| p["id"] == "reservaciones_delivery").unwrap();
+    assert_eq!(reservaciones["enabled"], false, "el cambio persiste");
+
+    assert!(set_enabled(&conn, "plugin_inexistente", true).is_err(), "un id inexistente se rechaza");
+}
