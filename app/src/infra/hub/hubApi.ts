@@ -305,3 +305,34 @@ export function createDeliveryOrder(
 export function updateDeliveryStatus(id: string, status: DeliveryOrder["estado"], baseUrl = DEFAULT_BASE): Promise<unknown> {
   return postJson(baseUrl, `/delivery-orders/${id}/status`, { status });
 }
+
+// ---------------------------------------------------------------------------
+// Fase 7: factura global (agrupa ventas sin CFDI individual)
+// ---------------------------------------------------------------------------
+
+export interface UninvoicedSale {
+  saleId: string;
+  folio: string;
+  datetime: number;
+  totalCents: number;
+}
+
+export async function fetchUninvoicedSales(baseUrl = DEFAULT_BASE): Promise<UninvoicedSale[]> {
+  const res = await fetch(`${baseUrl}/cfdi/uninvoiced-sales`);
+  return res.json();
+}
+
+export interface GlobalInvoiceResponse {
+  documentId: string;
+  folio: string;
+  estado: string;
+  totalCents: number;
+  ventasIncluidas: number;
+}
+
+export function generateGlobalInvoice(
+  body: { saleIds: string[]; rfcReceptor?: string; nombreReceptor?: string; usoCfdi?: string },
+  baseUrl = DEFAULT_BASE,
+): Promise<GlobalInvoiceResponse> {
+  return postJson(baseUrl, "/cfdi/global", body);
+}

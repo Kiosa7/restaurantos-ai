@@ -336,6 +336,63 @@ fn genera_cfdi_a_partir_de_una_venta_cobrada() {
     assert_eq!(fetched["folio"], doc["folio"]);
 }
 
+/// Fase 7: factura global agrupa varias ventas sin CFDI individual en un
+/// solo documento (sale_id NULL); una venta no puede quedar facturada dos
+/// veces sin importar si fue por factura individual o global.
+#[test]
+fn factura_global_agrupa_varias_ventas_sin_duplicar() {
+    use app_lib::commands::*;
+
+    let conn = fresh_seeded_db();
+
+    let mut sale_ids = Vec::new();
+    for _ in 0..2 {
+        let payload: NuevaComandaPayload = serde_json::from_value(json!({
+            "tableNumber": 5,
+            "items": [{ "productId": "mi_tacos_pastor", "cantidad": 1 }]
+        })).unwrap();
+        let order = handle_nueva_comanda(&conn, &payload).unwrap();
+        let checkout_payload: CheckoutPayload = serde_json::from_value(json!({
+            "orderId": order["orderId"], "paymentMethod": "efectivo"
+        })).unwrap();
+        let sale = handle_checkout(&conn, &checkout_payload).unwrap();
+        sale_ids.push(sale["saleIds"][0].as_str().unwrap().to_string());
+    }
+
+    let uninvoiced_before = list_uninvoiced_sales(&conn);
+    assert!(uninvoiced_before.as_array().unwrap().len() >= 2, "las ventas recién cobradas deben aparecer como no facturadas");
+
+    let global_payload = GenerateGlobalInvoicePayload {
+        sale_ids: sale_ids.clone(),
+        rfc_receptor: "XAXX010101000".into(),
+        nombre_receptor: "PUBLICO EN GENERAL".into(),
+        uso_cfdi: "S01".into(),
+    };
+    let doc = generate_global_invoice(&conn, &global_payload).expect("debe generar la factura global sin error");
+    assert_eq!(doc["ventasIncluidas"], 2);
+    assert_eq!(doc["totalCents"], 9000 * 2, "el total global debe sumar las dos ventas");
+    assert_eq!(doc["conceptos"].as_array().unwrap().len(), 2);
+
+    // Ya facturadas globalmente: no se pueden volver a incluir ni individual ni global.
+    assert!(generate_global_invoice(&conn, &global_payload).is_err(), "no debe poder re-facturar globalmente ventas ya incluidas");
+    let individual_payload = GenerateCfdiPayload {
+        sale_id: sale_ids[0].clone(), rfc_receptor: "XAXX010101000".into(), nombre_receptor: "X".into(), uso_cfdi: "G03".into(),
+    };
+    assert!(generate_cfdi(&conn, &individual_payload).is_err(), "una venta ya en una factura global no debe poder facturarse individual");
+
+    let uninvoiced_after = list_uninvoiced_sales(&conn);
+    for sid in &sale_ids {
+        assert!(!uninvoiced_after.as_array().unwrap().iter().any(|s| s["saleId"] == *sid), "las ventas ya facturadas no deben seguir en la lista de pendientes");
+    }
+
+    // Distinto local en la misma factura global: rechazado (solo hay 1 local en el seed, se valida con IDs inventados).
+    let mixed = GenerateGlobalInvoicePayload {
+        sale_ids: vec!["sale-inexistente".into()],
+        rfc_receptor: "XAXX010101000".into(), nombre_receptor: "X".into(), uso_cfdi: "S01".into(),
+    };
+    assert!(generate_global_invoice(&conn, &mixed).is_err(), "una venta inexistente debe rechazarse");
+}
+
 /// Fase 7: cliente real, promoción activa y redención de puntos aplicados
 /// en un cobro real (no solo el cálculo aislado).
 #[test]

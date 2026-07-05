@@ -152,6 +152,8 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/ai/chat", post(post_ai_chat))
         .route("/cfdi/generate", post(post_cfdi_generate))
         .route("/cfdi/by-sale/:sale_id", get(get_cfdi_by_sale))
+        .route("/cfdi/global", post(post_cfdi_global))
+        .route("/cfdi/uninvoiced-sales", get(get_uninvoiced_sales))
         .route("/customers", get(get_customers).post(post_customer))
         .route("/promotions", get(get_promotions).post(post_promotion))
         .route("/suppliers", get(get_suppliers).post(post_supplier))
@@ -185,6 +187,19 @@ async fn post_cfdi_generate(State(state): State<Arc<HubState>>, Json(payload): J
 async fn get_cfdi_by_sale(State(state): State<Arc<HubState>>, Path(sale_id): Path<String>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
     Json(commands::get_cfdi_document(&conn, &sale_id))
+}
+
+async fn post_cfdi_global(State(state): State<Arc<HubState>>, Json(payload): Json<commands::GenerateGlobalInvoicePayload>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    match commands::generate_global_invoice(&conn, &payload) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn get_uninvoiced_sales(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(commands::list_uninvoiced_sales(&conn))
 }
 
 async fn get_customers(State(state): State<Arc<HubState>>) -> impl IntoResponse {

@@ -780,7 +780,11 @@ pub fn generate_cfdi(conn: &Connection, payload: &GenerateCfdiPayload) -> Result
         .map_err(|_| err("la venta no existe"))?;
 
     let already: Option<String> = conn
-        .query_row("SELECT id FROM cfdi_documents WHERE sale_id = ?1", params![payload.sale_id], |r| r.get(0))
+        .query_row(
+            "SELECT cc.document_id FROM cfdi_conceptos cc JOIN sale_items si ON si.id = cc.sale_item_id WHERE si.sale_id = ?1 LIMIT 1",
+            params![payload.sale_id],
+            |r| r.get(0),
+        )
         .optional()
         .map_err(|e| err(e.to_string()))?;
     if let Some(existing_id) = already {
@@ -831,6 +835,152 @@ pub fn generate_cfdi(conn: &Connection, payload: &GenerateCfdiPayload) -> Result
         "conceptos": conceptos_json,
         "nota": "Documento generado, NO timbrado — falta cuenta de PAC real (⛔ spike 3)."
     }))
+}
+
+/// Factura global (Fase 7 §10.1 punto 2): agrupa varias ventas del día que
+/// nadie pidió facturar individualmente en un solo CFDI con `sale_id NULL`
+/// (columna ya prevista desde 0015). Reutiliza el mismo folio/conceptos que
+/// `generate_cfdi`; la única diferencia real es que itera N ventas en vez
+/// de 1. No requiere migración nueva: "¿ya se facturó esta venta?" se
+/// resuelve con el mismo join sale_items→cfdi_conceptos que usaría una
+/// factura individual, así que una venta no puede quedar facturada dos veces
+/// sin importar si fue por una factura individual o por una global.
+#[derive(Deserialize)]
+pub struct GenerateGlobalInvoicePayload {
+    #[serde(rename = "saleIds")]
+    pub sale_ids: Vec<String>,
+    #[serde(rename = "rfcReceptor", default = "default_rfc_publico_general")]
+    pub rfc_receptor: String,
+    #[serde(rename = "nombreReceptor", default = "default_nombre_publico_general")]
+    pub nombre_receptor: String,
+    #[serde(rename = "usoCfdi", default = "default_uso_cfdi_global")]
+    pub uso_cfdi: String,
+}
+fn default_rfc_publico_general() -> String { "XAXX010101000".into() }
+fn default_nombre_publico_general() -> String { "PUBLICO EN GENERAL".into() }
+fn default_uso_cfdi_global() -> String { "S01".into() } // S01 = Sin efectos fiscales (catálogo típico de factura global)
+
+pub fn generate_global_invoice(conn: &Connection, payload: &GenerateGlobalInvoicePayload) -> Result<Value> {
+    if payload.sale_ids.is_empty() {
+        return Err(err("la factura global necesita al menos una venta"));
+    }
+    let now = now_ms();
+
+    let mut location_id: Option<String> = None;
+    let mut subtotal_total = 0i64;
+    let mut tax_total_total = 0i64;
+    let mut total_total = 0i64;
+    let mut ventas: Vec<(String, i64, i64, i64)> = Vec::new(); // (sale_id, subtotal, tax, total)
+
+    for sale_id in &payload.sale_ids {
+        let (loc, subtotal, tax_total, total): (String, i64, i64, i64) = conn
+            .query_row(
+                "SELECT location_id, subtotal, tax_total, total FROM sales WHERE id = ?1",
+                params![sale_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .map_err(|_| err(format!("la venta {sale_id} no existe")))?;
+        if let Some(existing_loc) = &location_id {
+            if existing_loc != &loc {
+                return Err(err("todas las ventas de una factura global deben ser del mismo local"));
+            }
+        } else {
+            location_id = Some(loc);
+        }
+
+        let ya_facturada: Option<String> = conn
+            .query_row(
+                "SELECT cc.id FROM cfdi_conceptos cc JOIN sale_items si ON si.id = cc.sale_item_id WHERE si.sale_id = ?1 LIMIT 1",
+                params![sale_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| err(e.to_string()))?;
+        if ya_facturada.is_some() {
+            return Err(err(format!("la venta {sale_id} ya está incluida en otro CFDI")));
+        }
+
+        subtotal_total += subtotal;
+        tax_total_total += tax_total;
+        total_total += total;
+        ventas.push((sale_id.clone(), subtotal, tax_total, total));
+    }
+    let location_id = location_id.unwrap();
+
+    let folio_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM cfdi_documents WHERE location_id = ?1", params![location_id], |r| r.get(0))
+        .unwrap_or(0);
+    let folio = format!("{:06}", folio_count + 1);
+
+    let doc_id = uuid7();
+    conn.execute(
+        "INSERT INTO cfdi_documents
+            (id,tenant_id,location_id,issuer_id,sale_id,tipo_comprobante,serie,folio,rfc_receptor,nombre_receptor,uso_cfdi,forma_pago,metodo_pago,moneda,subtotal,iva,total,estado,created_at,updated_at,origin_node)
+         VALUES (?1,?2,?3,?4,NULL,'I','FG',?5,?6,?7,?8,'01','PUE','MXN',?9,?10,?11,'pendiente',?12,?12,?13)",
+        params![doc_id, seed::TENANT, location_id, seed::CFDI_ISSUER, folio, payload.rfc_receptor, payload.nombre_receptor, payload.uso_cfdi, subtotal_total, tax_total_total, total_total, now, seed::NODE],
+    ).map_err(|e| err(e.to_string()))?;
+
+    let mut conceptos_json = Vec::new();
+    for (sale_id, ..) in &ventas {
+        let mut stmt = conn
+            .prepare("SELECT id, name_snapshot, unit_price, qty, line_total FROM sale_items WHERE sale_id = ?1")
+            .map_err(|e| err(e.to_string()))?;
+        let items: Vec<(String, String, i64, f64, i64)> = stmt
+            .query_map(params![sale_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .map_err(|e| err(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+        for (sale_item_id, name, unit_price, qty, line_total) in &items {
+            conn.execute(
+                "INSERT INTO cfdi_conceptos (id,document_id,sale_item_id,clave_prod_serv,clave_unidad,descripcion,cantidad,valor_unitario,importe,created_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![uuid7(), doc_id, sale_item_id, CLAVE_PROD_SERV_GENERICA, CLAVE_UNIDAD_GENERICA, name, qty, unit_price, line_total, now],
+            ).map_err(|e| err(e.to_string()))?;
+            conceptos_json.push(json!({ "descripcion": name, "cantidad": qty, "valorUnitarioCents": unit_price, "importeCents": line_total }));
+        }
+    }
+
+    Ok(json!({
+        "documentId": doc_id,
+        "folio": folio,
+        "estado": "pendiente",
+        "rfcReceptor": payload.rfc_receptor,
+        "nombreReceptor": payload.nombre_receptor,
+        "subtotalCents": subtotal_total,
+        "ivaCents": tax_total_total,
+        "totalCents": total_total,
+        "ventasIncluidas": payload.sale_ids.len(),
+        "conceptos": conceptos_json,
+        "nota": "Factura global generada, NO timbrada — falta cuenta de PAC real (⛔ spike 3)."
+    }))
+}
+
+/// Ventas del día que aún no tienen CFDI (candidatas para factura global o
+/// individual) — mismo join que la verificación de duplicados de arriba.
+pub fn list_uninvoiced_sales(conn: &Connection) -> Value {
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.id, s.folio, s.datetime, s.total
+             FROM sales s
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM sale_items si JOIN cfdi_conceptos cc ON cc.sale_item_id = si.id WHERE si.sale_id = s.id
+             )
+             ORDER BY s.datetime DESC",
+        )
+        .unwrap();
+    let rows: Vec<Value> = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "saleId": r.get::<_, String>(0)?,
+                "folio": r.get::<_, String>(1)?,
+                "datetime": r.get::<_, i64>(2)?,
+                "totalCents": r.get::<_, i64>(3)?,
+            }))
+        })
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+    json!(rows)
 }
 
 pub fn get_cfdi_document(conn: &Connection, sale_id: &str) -> Value {

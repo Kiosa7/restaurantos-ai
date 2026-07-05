@@ -208,7 +208,7 @@ marketplace · Auditoría avanzada · Franquicias · API pública · Visión ava
 | **4 Base de datos** ✅ | Migraciones nuevas: menú/modificadores, mesas, comandas/tiempos, recetas/insumos, turnos/propinas, tablas CFDI | Esquema validado con datos reales (node:sqlite, servicio completo simulado) |
 | **5 Infraestructura** 🟡 | Hub server (HTTP+WS) ✅, pairing real ✅ (genera/persiste, enforcement ⛔), servido de PWA ✅ — updater y empaquetado ⛔ | "Instalación limpia en PC virgen < 30 min" SIN validar (falta `tauri build`, decisión de posponerlo ya tomada) |
 | **6 MVP** ✅ | Los 9 puntos de §10 abordados: comandas/inventario/caja/turnos/impresión(sw)/RBAC/backup/IA/pairing, todo verificado contra el binario real | **Un restaurante piloto opera un servicio de viernes completo sin tocar papel** — el software ya lo soporta; falta el piloto real (⛔ §11.4) para decir que se cumplió en la práctica |
-| **7 Comercial** 🟡 ⬅️ SIGUIENTE | CFDI (generación ✅, timbrado ⛔), clientes ✅, fidelización ✅, promociones ✅, compras+proveedores+OCR ✅, reservaciones ✅, delivery/para llevar ✅ — faltan factura global/complemento de pago y reportes avanzados | Primer cliente de pago facturando — lejos, falta timbrado real; el resto de módulos de negocio ya opera contra el binario real |
+| **7 Comercial** 🟡 ⬅️ SIGUIENTE | CFDI (generación ✅, timbrado ⛔), factura global ✅ (complemento de pago ⛔ transitivo de timbrado), clientes ✅, fidelización ✅, promociones ✅, compras+proveedores+OCR ✅, reservaciones ✅, delivery/para llevar ✅ — solo faltan reportes avanzados | Primer cliente de pago facturando — lejos, falta timbrado real; el resto de módulos de negocio ya opera contra el binario real |
 | **8 Enterprise** ⬜ | Multi-sucursal, plugins, API pública | Cadena 3+ sucursales sincronizando |
 
 Entregables documentales de la Fase 2 (crear en `docs/`): visión de producto ·
@@ -318,13 +318,27 @@ verificado contra el binario (`cargo test` + flujo WS+HTTP en vivo).
    estructural; falta portar `spikes/cfdi/client.mjs` (`FacturamaClient`/
    `SwSapienClient`) a Rust con `reqwest` (mismo patrón que `ai.rs`) y
    llamarlo tras `generate_cfdi`, actualizando `estado`/`uuid_fiscal`/`xml`.
-2. **Factura global y complemento de pago** — PENDIENTE. El modelo de datos
-   (0015) ya tiene `cfdi_pago_complementos` y soporta `sale_id IS NULL`
-   (factura global); falta la lógica que agrupa varias ventas del día.
-   Complemento de pago requiere además un concepto de "venta a crédito"
-   (pago diferido) que no existe todavía en el dominio — ver bitácora
-   2026-07-05 para el desglose de por qué se dejó para después de
-   reservaciones/delivery (menor dependencia, mayor certeza de alcance).
+2. ✅ **Factura global** — `commands.rs::generate_global_invoice` agrupa N
+   ventas sin CFDI individual en un solo documento (`sale_id NULL`, ya
+   previsto en 0015). Rutas `POST /cfdi/global` y
+   `GET /cfdi/uninvoiced-sales`. `FacturaGlobalPanel.tsx` en `CajaScreen`.
+   Verificado contra el binario real (2026-07-05).
+   ⛔ **Complemento de pago** — sigue bloqueado, y NO por falta de diseño:
+   un complemento de pago se relaciona (`documento_relacionado_uuid`) con el
+   **UUID fiscal** de la factura PPD original, que el SAT solo asigna al
+   timbrar de verdad. Como el timbrado real sigue bloqueado (punto 1, sin
+   cuenta de PAC), no existe ningún UUID fiscal real al que relacionar un
+   complemento — es el mismo bloqueo de fondo, no uno nuevo. DECISIÓN
+   AUTÓNOMA: no se construyó un concepto especulativo de "ventas a
+   crédito" para rodear esto, porque además de la dependencia del PAC
+   implicaría un rediseño real del checkout (hoy toda `sales` se crea con
+   su pago ya recibido — ver ADR-6/docs/modelo-dominio.md) que es una
+   decisión de alcance de negocio (¿el restaurante da crédito a clientes
+   corporativos? ¿con qué términos?), no una limitación técnica a resolver
+   por adivinanza. Cuando exista cuenta de PAC y el timbrado real esté
+   conectado, `cfdi_pago_complementos` (tabla ya lista desde 0015) es
+   suficiente para registrar los pagos del complemento sin más cambios de
+   esquema.
 3. ✅ **Clientes** — `commerce.rs` (`create_customer`/`list_customers`)
    sobre la tabla heredada `customers`; ligado al checkout
    (`customerId` opcional en `/checkout`). Selector de cliente en
@@ -376,8 +390,9 @@ verificado contra el binario (`cargo test` + flujo WS+HTTP en vivo).
 
 **Ninguno de estos bloquea empezar el siguiente**: son módulos
 independientes entre sí salvo (1)→(2) (timbrado antes que factura global).
-Con (3)-(8) cerrados, solo quedan (2) y (9) para cerrar Fase 7 además del
-timbrado bloqueado.
+Con (2)-(8) cerrados (complemento de pago ⛔ transitivamente bloqueado por
+(1), no rehecho), solo queda (9) reportes avanzados para cerrar Fase 7
+además del timbrado bloqueado.
 
 ## 10.2 Fase 8 (Enterprise) — sin empezar
 
@@ -444,11 +459,12 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   algo fuera del código (hardware físico) o de una decisión de ruptura
   deliberada (enforcement de pairing) — ver §10 y bitácora 2026-07-04.
 - 🟡 Fase 7 Comercial — AVANZADA: generación de CFDI 4.0 real (`POST
-  /cfdi/generate`), clientes, fidelización, promociones, compras+
-  proveedores+OCR, reservaciones y delivery/para llevar — los 7 módulos
-  completos y verificados contra el binario real. ⛔ Timbrado real
-  bloqueado (spike 3, sin cuenta de PAC). Faltan factura global/
-  complemento de pago y reportes avanzados — ver §10.1 (2026-07-05).
+  /cfdi/generate`), factura global, clientes, fidelización, promociones,
+  compras+proveedores+OCR, reservaciones y delivery/para llevar — los 8
+  módulos completos y verificados contra el binario real. ⛔ Timbrado real
+  bloqueado (spike 3, sin cuenta de PAC); complemento de pago bloqueado
+  transitivamente (necesita el UUID fiscal que solo da un timbrado real).
+  Falta solo reportes avanzados para cerrar Fase 7 — ver §10.1 (2026-07-05).
 - ⬜ Fase 8 Enterprise — sin empezar, ver §9 y §10.2.
 
 ## Bitácora
@@ -985,3 +1001,45 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     timbrado real (⛔ bloqueado, sin cambio), (2) factura global/
     complemento de pago, y (9) reportes avanzados. Continúa la sesión con
     (2) y (9) para cerrar Fase 7, y después Fase 8 (§10.2).
+- 2026-07-05: Fase 7 continuación (modo autónomo total) — factura global.
+  - **Factura global**: `commands.rs::generate_global_invoice` agrupa N
+    ventas del día sin CFDI individual en un solo documento con
+    `sale_id NULL` (columna ya prevista en 0015). No hizo falta ninguna
+    migración nueva: "¿ya está facturada esta venta?" se resuelve con el
+    mismo join `sale_items→cfdi_conceptos` tanto para factura individual
+    como global, así que una venta no puede quedar facturada dos veces sin
+    importar por cuál vía. Corregido de paso un hueco real que esto
+    destapó: `generate_cfdi` (individual) solo revisaba
+    `cfdi_documents.sale_id`, que es NULL en una factura global —una venta
+    ya incluida en una global podía facturarse individual otra vez. Ahora
+    ambas rutas usan el mismo join. Rutas nuevas `POST /cfdi/global` y
+    `GET /cfdi/uninvoiced-sales` (ventas sin CFDI, candidatas a agrupar).
+    `FacturaGlobalPanel.tsx` en `CajaScreen` (selección con checkboxes +
+    botón generar).
+  - ⛔ **Complemento de pago** — evaluado y NO implementado, con
+    justificación técnica, no solo de alcance: un complemento de pago se
+    relaciona (`documento_relacionado_uuid`, ya modelado en
+    `cfdi_pago_complementos` desde 0015) con el UUID fiscal de la factura
+    PPD original, y ese UUID solo existe después de un timbrado real. Con
+    el timbrado bloqueado (spike 3, sin cuenta de PAC), no hay ningún UUID
+    fiscal real al que relacionar un complemento — es transitivamente el
+    mismo bloqueo del punto 1, no uno nuevo. DECISIÓN AUTÓNOMA: se evitó
+    construir un concepto especulativo de "ventas a crédito" para rodear
+    esto (implicaría redefinir cuándo se crea una `sale` — hoy siempre con
+    su pago ya recibido, ver ADR-6 — y es una decisión de alcance de
+    negocio del dueño, no algo que deba adivinarse). Cuando exista cuenta
+    de PAC y timbrado real, la tabla ya está lista y conectar el
+    complemento es acotado.
+  - Verificado: `cargo test` 13/13 (nuevo
+    `factura_global_agrupa_varias_ventas_sin_duplicar`, cubre agrupar 2
+    ventas, rechazo de re-facturar global o individual una venta ya
+    incluida, y venta inexistente), `npm test` 23/23, typecheck/build
+    limpios. Contra el binario real (script Node, 14 aserciones vía
+    `fetch`): 2 ventas nuevas aparecen en `/cfdi/uninvoiced-sales`,
+    factura global las agrupa con el total correcto y queda en estado
+    `pendiente`, un segundo intento de facturar global o individual
+    cualquiera de esas ventas se rechaza, y ambas desaparecen de la lista
+    de pendientes. Hub detenido limpiamente y `.db` de desarrollo borrada.
+  - **Con esto, de los 9 puntos de §10.1 solo queda pendiente el (9)
+    reportes avanzados** para cerrar Fase 7 por completo (además del
+    timbrado real, bloqueado sin cambio desde Fase 2).
