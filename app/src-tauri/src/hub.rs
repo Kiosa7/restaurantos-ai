@@ -137,7 +137,9 @@ fn events_since(conn: &Connection, since_index: i64) -> Vec<HubEvent> {
 pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
     let mut router = Router::new()
         .route("/health", get(health))
-        .route("/pair", post(pair))
+        .route("/pair/generate", post(post_pair_generate))
+        .route("/pair/redeem", post(post_pair_redeem))
+        .route("/pair/devices", get(get_pair_devices))
         .route("/auth/pin", post(post_auth_pin))
         .route("/menu", get(get_menu))
         .route("/tables", get(get_tables))
@@ -161,10 +163,30 @@ async fn health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok", "serverTime": now_ms() }))
 }
 
-async fn pair(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
-    let role = body.get("role").and_then(|v| v.as_str()).unwrap_or("desconocido");
-    let token = uuid::Uuid::new_v4().to_string();
-    Json(serde_json::json!({ "token": token, "role": role, "issuedAt": now_ms() }))
+async fn post_pair_generate(State(state): State<Arc<HubState>>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    let role = body.get("role").and_then(|v| v.as_str()).unwrap_or("");
+    let conn = state.db.lock().unwrap();
+    match commands::generate_pairing(&conn, role) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn post_pair_redeem(State(state): State<Arc<HubState>>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    let Some(code) = body.get("code").and_then(|v| v.as_str()) else {
+        return domain_error_response("falta code".into());
+    };
+    let label = body.get("label").and_then(|v| v.as_str());
+    let conn = state.db.lock().unwrap();
+    match commands::redeem_pairing(&conn, code, label) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => domain_error_response(e.0),
+    }
+}
+
+async fn get_pair_devices(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(commands::list_devices(&conn))
 }
 
 async fn post_auth_pin(State(state): State<Arc<HubState>>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
@@ -260,7 +282,19 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| handle_socket(socket, role, device, since_index, state))
 }
 
-async fn handle_socket(socket: WebSocket, role: String, _device: String, since_index: i64, state: Arc<HubState>) {
+async fn handle_socket(socket: WebSocket, role: String, device: String, since_index: i64, state: Arc<HubState>) {
+    // Pairing real (Fase 6 §10.9): si el device ya está pareado, se registra
+    // su actividad. Si NO lo está, la conexión igual se permite (⛔
+    // enforcement estricto pendiente — romperlo exige que las 3 pantallas
+    // hagan el handshake de pairing antes de conectar, ver PLAN.md) pero
+    // queda en el log para saber qué tan lejos está el sistema de exigirlo.
+    {
+        let conn = state.db.lock().unwrap();
+        if !commands::touch_device_if_paired(&conn, &device) {
+            log::info!("WS: dispositivo no pareado conectado (role={role}, device={device})");
+        }
+    }
+
     let (mut sink, mut stream) = socket.split();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
 

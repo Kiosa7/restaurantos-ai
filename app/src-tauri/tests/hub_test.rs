@@ -269,3 +269,29 @@ fn snapshot_de_respaldo_incluye_catalogo_y_mesas_sembradas() {
     assert!(tables["tables"].as_array().unwrap().len() == 5, "incluye las 5 mesas sembradas");
     assert!(tables["employees"].as_array().unwrap().iter().any(|e| e["id"] == seed::EMPLOYEE_CAJERO));
 }
+
+/// Fase 6 §10.9: pairing real — un código de un solo uso crea un `deviceId`
+/// persistente; redimirlo dos veces debe fallar la segunda.
+#[test]
+fn pairing_genera_y_redime_un_codigo_de_un_solo_uso() {
+    use app_lib::commands::{generate_pairing, redeem_pairing, list_devices};
+
+    let conn = fresh_seeded_db();
+
+    let generated = generate_pairing(&conn, "kds").expect("debe generar un código para rol válido");
+    let code = generated["code"].as_str().unwrap().to_string();
+    assert_eq!(code.len(), 6);
+
+    let redeemed = redeem_pairing(&conn, &code, Some("KDS de cocina")).expect("el código recién generado debe redimirse");
+    assert_eq!(redeemed["role"], "kds");
+    assert!(redeemed["deviceId"].as_str().unwrap().len() > 0);
+
+    let second_attempt = redeem_pairing(&conn, &code, None);
+    assert!(second_attempt.is_err(), "un código ya redimido no debe volver a funcionar");
+
+    let devices = list_devices(&conn);
+    assert_eq!(devices.as_array().unwrap().len(), 1);
+    assert_eq!(devices[0]["label"], "KDS de cocina");
+
+    assert!(generate_pairing(&conn, "rol_invalido").is_err());
+}

@@ -112,3 +112,27 @@ export interface AiChatResponse {
 export function askAssistant(question: string, baseUrl = DEFAULT_BASE): Promise<AiChatResponse> {
   return postJson(baseUrl, "/ai/chat", { question });
 }
+
+export interface PairingCode {
+  code: string;
+  role: "mesero" | "kds" | "caja";
+  expiresAt: number;
+}
+
+/** Genera un código de emparejamiento de un solo uso (Fase 6 §10.9). */
+export function generatePairing(role: PairingCode["role"], baseUrl = DEFAULT_BASE): Promise<PairingCode> {
+  return postJson(baseUrl, "/pair/generate", { role });
+}
+
+export interface PairedDevice {
+  deviceId: string;
+  role: string;
+  label: string | null;
+  pairedAt: number;
+  lastSeenAt: number | null;
+}
+
+export async function fetchPairedDevices(baseUrl = DEFAULT_BASE): Promise<PairedDevice[]> {
+  const res = await fetch(`${baseUrl}/pair/devices`);
+  return res.json();
+}

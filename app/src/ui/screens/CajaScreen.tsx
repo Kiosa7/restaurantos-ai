@@ -8,6 +8,7 @@ import { cuentaTicket } from "@infra/print/tickets";
 import { printTicket } from "@infra/print/printClient";
 import { BackupPanel } from "@ui/components/BackupPanel";
 import { AsistentePanel } from "@ui/components/AsistentePanel";
+import { PairingPanel } from "@ui/components/PairingPanel";
 
 // MVP (Fase 6 §10.5): un solo mesero de turno del seed demo. RBAC/PIN (§10.6)
 // ya autentica a quien opera la Caja (ver PinGate en App.tsx), pero el turno
@@ -170,6 +171,9 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
 
       <div className="md:col-span-2">
         <AsistentePanel apiUrl={apiUrl} />
+      </div>
+      <div className="md:col-span-2">
+        <PairingPanel apiUrl={apiUrl} />
       </div>
       <div className="md:col-span-2">
         <BackupPanel apiUrl={apiUrl} />

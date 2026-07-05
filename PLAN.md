@@ -285,9 +285,17 @@ salvo donde se anota dependencia):
    (`docs/ai/tools-conversacional-restaurante.md`, nuevo): márgenes por
    platillo, cola de cocina, tiempo de preparación, estado de mesas, propinas
    por turno. `AsistentePanel.tsx` en Caja con preguntas sugeridas.
-9. **Pairing real de dispositivos** (hoy `/pair` es un placeholder, ver
-   spike-5): QR/PIN generado en el hub, `deviceId` persistente, rol
-   asociado.
+9. 🟡 **Pairing real de dispositivos** — migración `0018_device_pairings.sql`
+   (`device_pairings` + `devices`), `POST /pair/generate` (código de 6
+   dígitos, un solo uso, expira a los 5 min), `POST /pair/redeem` (crea
+   `deviceId` persistente ligado a un rol), `GET /pair/devices`.
+   `PairingPanel.tsx` en Caja genera códigos con QR-como-texto y muestra
+   dispositivos ya emparejados. ⛔ Enforcement pendiente: el WS solo
+   REGISTRA (`touch_device_if_paired`, log si no está pareado) pero no
+   RECHAZA conexiones de dispositivos sin parear todavía — hacerlo exige que
+   Mesero/KDS/Caja hagan el handshake de "redimir código" antes de conectar
+   el WS, que no se cableó en esta pasada (romperlo ahora habría tumbado
+   todo el flujo mesero↔hub↔KDS↔Caja que ya funciona).
 
 **Criterio de éxito de Fase 6 no depende solo de código**: necesita el
 restaurante piloto (⛔ §11.4) para el "sin tocar papel" real; mientras tanto,
@@ -336,17 +344,19 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   validado (protocolo + PWA estática, 2/2 tests). Pairing MVP. ⛔ empaquetado
   real (MSI/NSIS), updater y resource bundling de la PWA en producción
   pendientes (2026-07-03) — ver docs/spikes/spike-5-hub-rust.md.
-- 🟡 Fase 6 MVP — 8/9 puntos de §10 completos: (1) hub persistido en SQLite,
-  (2) Caja funcional (ver/dividir/cobrar), (3) descuento de inventario por
-  receta como caso de uso real, (4) impresión ESC/POS en software (⛔ falta
-  hardware), (5) turnos/propinas en UI, (6) RBAC/PIN (verificado en el hub,
-  no en el cliente), (7) backup cifrado (exporta real, restaura con preview
-  sin reescribir el hub aún), (8) asistente IA v1 (5 tools, verificado contra
-  Ollama real Y verificado que NO bloquea el WS mientras piensa).
-  Mesero↔hub↔KDS↔Caja funcionando de punta a punta contra el binario real
-  (comanda→bump→cobro→turno cerrado con propina repartida, verificado con
-  scripts WS+HTTP en vivo, no solo tests).
-  Falta: (9) pairing real (2026-07-04).
+- 🟡 Fase 6 MVP — **9/9 puntos de §10 abordados** (7 completos sin
+  reservas: 1,2,3,5,6,7,8; 2 con una parte ⛔ documentada: 4 impresión de
+  software completo/falta hardware físico, 9 pairing generado/persistido
+  completo/falta que el WS lo EXIJA). Mesero↔hub↔KDS↔Caja funcionando de
+  punta a punta contra el binario real (comanda→bump con descuento de
+  inventario→cobro→turno cerrado con propina repartida→asistente IA
+  respondiendo con datos reales sin bloquear el WS→dispositivo emparejado
+  con código de un solo uso), todo verificado con scripts WS+HTTP en vivo
+  contra el binario compilado, no solo con `cargo test`/`npm test`.
+  **Fase 6 queda funcionalmente completa para el estándar de este proyecto**
+  (código + verificación real); lo que falta son 2 piezas que dependen de
+  algo fuera del código (hardware físico) o de una decisión de ruptura
+  deliberada (enforcement de pairing) — ver §10 y bitácora 2026-07-04.
 - ⬜ Fases 7–8 — sin empezar, ver §9.
 
 ## Bitácora
@@ -704,3 +714,52 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     `ai_chat_log` (historial se pierde entre reinicios).
   - Próximo: punto 9 (pairing real de dispositivos) de §10, último pendiente
     de Fase 6, luego Fases 7–8.
+- 2026-07-04: Fase 6 punto 9 (pairing real) completado — CIERRE DE FASE 6.
+  - Migración `0018_device_pairings.sql`: `device_pairings` (código de 6
+    dígitos, un solo uso, expira a los 5 min) y `devices` (identidad
+    persistente: id UUID v7, rol, label, paired_at, last_seen_at).
+  - `POST /pair/generate {role}` → código; `POST /pair/redeem {code,label}`
+    → crea el `deviceId` y marca el código usado (falla si ya se usó o
+    expiró); `GET /pair/devices` → lista para administración.
+    `PairingPanel.tsx` en Caja: selector de rol, genera y muestra el código
+    con cuenta regresiva, lista dispositivos ya emparejados.
+  - DECISIÓN AUTÓNOMA: el WS (`handle_socket`) llama a
+    `touch_device_if_paired` — si el `device` de la conexión SÍ está
+    pareado, actualiza `last_seen_at`; si NO, deja pasar la conexión igual
+    (con un log informativo) en vez de rechazarla. Exigir pairing de verdad
+    (rechazar conexiones no pareadas) requeriría que Mesero/KDS/Caja hicieran
+    un paso de "canjear código" antes de conectar — cambio de UI que no se
+    hizo en esta pasada porque habría arriesgado romper el flujo
+    mesero↔hub↔KDS↔Caja que ya está probado y funcionando de punta a punta;
+    más valioso dejarlo generando/persistiendo pairing real (que es lo que
+    faltaba de fondo) y marcar el enforcement como el siguiente paso exacto.
+  - Verificado: `cargo test` 7/7 (nuevo
+    `pairing_genera_y_redime_un_codigo_de_un_solo_uso`), `npm test` 23/23
+    (corregido el conteo de migraciones a 18), typecheck/build limpios, y
+    contra el binario real: generar código → redimir (crea deviceId) →
+    redimir de nuevo falla (400) → `GET /pair/devices` lo lista.
+
+  ## FASE 6 (MVP) — CIERRE
+
+  Los 9 puntos de §10 quedaron abordados con código real y verificación
+  contra el binario compilado (no solo tests unitarios), en el mismo
+  estándar que se usó en Fases 1-5. Resumen de lo que SÍ se puede prometer
+  hoy: un mesero manda una comanda real desde una tablet, la cocina la ve
+  en vivo y al marcarla "en preparación" el hub descuenta inventario por
+  receta de verdad, la caja la cobra (con división de cuenta y propina) y
+  genera una venta con cadena de hash, el turno se cierra repartiendo esa
+  propina, el dueño le puede preguntar al asistente de IA local sin que eso
+  afecte la velocidad de las comandas, hay botones de imprimir (aunque sin
+  impresora real para probarlos), un backup cifrado descargable, PINs reales
+  por empleado con permisos reales, y un flujo para emparejar dispositivos
+  nuevos. Todo esto sobre un hub Rust persistido en SQLite que sobrevive
+  reinicios — no una demo de humo.
+
+  Lo que NO se puede prometer todavía (⛔, honesto): que una impresora
+  térmica real imprima bien (falta el hardware), que un dispositivo sin
+  parear sea rechazado (falta el cambio de UI de "canjear código"), que el
+  timbrado CFDI funcione (Fase 7, falta cuenta de PAC), y que el sistema
+  completo quepa en un instalador de un clic (falta `tauri build`, decisión
+  ya tomada de posponerlo). Ninguno de estos bloquea seguir construyendo:
+  son piezas que dependen de un recurso externo o de una decisión de
+  producto, no de más diseño.

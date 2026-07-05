@@ -609,3 +609,103 @@ pub fn tips_summary_json(conn: &Connection) -> Value {
         .collect();
     Value::Array(rows)
 }
+
+// ---------------------------------------------------------------------------
+// Pairing real de dispositivos (Fase 6 §10.9)
+// ---------------------------------------------------------------------------
+
+const PAIRING_TTL_MS: i64 = 5 * 60_000;
+
+fn random_pairing_code() -> String {
+    use rand::Rng;
+    format!("{:06}", rand::thread_rng().gen_range(0..1_000_000))
+}
+
+/// Genera un código de 6 dígitos de un solo uso (válido 5 minutos) para que
+/// una tablet nueva se parée con el rol indicado. Se muestra en el hub
+/// (Caja/gerente) como texto o QR — el QR en sí es responsabilidad de la UI.
+pub fn generate_pairing(conn: &Connection, role: &str) -> Result<Value> {
+    if !matches!(role, "mesero" | "kds" | "caja") {
+        return Err(err(format!("rol inválido: {role}")));
+    }
+    let now = now_ms();
+    let expires_at = now + PAIRING_TTL_MS;
+    // Reintenta si el código (raro) ya existe y sigue vigente.
+    for _ in 0..5 {
+        let code = random_pairing_code();
+        let exists: bool = conn
+            .query_row("SELECT 1 FROM device_pairings WHERE code = ?1", params![code], |_| Ok(()))
+            .optional()
+            .map_err(|e| err(e.to_string()))?
+            .is_some();
+        if exists {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO device_pairings (code, role, created_at, expires_at) VALUES (?1,?2,?3,?4)",
+            params![code, role, now, expires_at],
+        ).map_err(|e| err(e.to_string()))?;
+        return Ok(json!({ "code": code, "role": role, "expiresAt": expires_at }));
+    }
+    Err(err("no se pudo generar un código único, intenta de nuevo"))
+}
+
+/// Redime un código vigente y crea la identidad persistente del dispositivo.
+/// Un código solo se puede redimir UNA vez (`redeemed_at IS NULL` en el WHERE).
+pub fn redeem_pairing(conn: &Connection, code: &str, label: Option<&str>) -> Result<Value> {
+    let now = now_ms();
+    let role: String = conn
+        .query_row(
+            "SELECT role FROM device_pairings WHERE code = ?1 AND redeemed_at IS NULL AND expires_at > ?2",
+            params![code, now],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| err(e.to_string()))?
+        .ok_or_else(|| err("código inválido, ya usado, o expirado"))?;
+
+    let device_id = uuid7();
+    conn.execute(
+        "INSERT INTO devices (id, role, label, paired_at, last_seen_at) VALUES (?1,?2,?3,?4,?4)",
+        params![device_id, role, label, now],
+    ).map_err(|e| err(e.to_string()))?;
+    conn.execute(
+        "UPDATE device_pairings SET redeemed_at = ?1, device_id = ?2 WHERE code = ?3",
+        params![now, device_id, code],
+    ).map_err(|e| err(e.to_string()))?;
+
+    Ok(json!({ "deviceId": device_id, "role": role }))
+}
+
+pub fn list_devices(conn: &Connection) -> Value {
+    let mut stmt = conn
+        .prepare("SELECT id, role, label, paired_at, last_seen_at FROM devices ORDER BY paired_at DESC")
+        .unwrap();
+    let rows: Vec<Value> = stmt
+        .query_map([], |r| {
+            Ok(json!({
+                "deviceId": r.get::<_, String>(0)?,
+                "role": r.get::<_, String>(1)?,
+                "label": r.get::<_, Option<String>>(2)?,
+                "pairedAt": r.get::<_, i64>(3)?,
+                "lastSeenAt": r.get::<_, Option<i64>>(4)?,
+            }))
+        })
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+    Value::Array(rows)
+}
+
+/// Actualiza `last_seen_at` si el device_id ya está pareado. Si NO lo está,
+/// no rechaza la conexión todavía (⛔ enforcement estricto pendiente, ver
+/// PLAN.md — romper esto exige que las 3 pantallas hagan el handshake de
+/// pairing antes de conectar el WS, que es la pieza que falta) — pero SÍ
+/// se registra para observabilidad.
+pub fn touch_device_if_paired(conn: &Connection, device_id: &str) -> bool {
+    let now = now_ms();
+    let updated = conn
+        .execute("UPDATE devices SET last_seen_at = ?1 WHERE id = ?2", params![now, device_id])
+        .unwrap_or(0);
+    updated > 0
+}
