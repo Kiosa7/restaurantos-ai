@@ -5,19 +5,29 @@
 //! test.mjs [...] así el protocolo queda probado antes y después del port".
 
 use app_lib::hub::{router, HubState};
+use app_lib::{db, seed};
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use std::path::Path;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::timeout;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+/// BD fresca en memoria, migrada y sembrada (mismos ids que el frontend,
+/// ver src/seed.rs) — cada test tiene su propia instancia aislada.
+fn fresh_seeded_db() -> rusqlite::Connection {
+    let conn = db::open_and_migrate(":memory:", Path::new("../../docs/db/migrations"));
+    seed::seed(&conn, app_lib::commands::now_ms());
+    conn
+}
 
 async fn start_test_hub() -> u16 {
     start_test_hub_with_pwa(None).await
 }
 
 async fn start_test_hub_with_pwa(pwa_dir: Option<&str>) -> u16 {
-    let state = HubState::new();
+    let state = HubState::new(fresh_seeded_db());
     let app = router(state, pwa_dir);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -98,15 +108,16 @@ async fn protocolo_multiterminal_verde_en_rust() {
     let cmd_id = uuid::Uuid::new_v4().to_string();
     let cmd = json!({
         "type": "cmd", "id": cmd_id, "cmd": "nueva_comanda",
-        "payload": { "mesa": 7, "items": [{ "producto": "Tacos al pastor", "cantidad": 3 }] }
+        "payload": { "tableNumber": 1, "items": [{ "productId": "mi_tacos_pastor", "cantidad": 3, "modificadores": [{"groupId":"mg_salsa","optionId":"op_salsa_roja"}] }] }
     });
     mesero.send(Message::Text(cmd.to_string())).await.unwrap();
 
     let ack = next_json_matching(&mut mesero, |v| v["type"] == "ack" && v["id"] == cmd_id).await;
-    assert_eq!(ack["status"], "ok");
+    assert_eq!(ack["status"], "ok", "ack: {ack:?}");
 
     let kds_event = next_json_matching(&mut kds, |v| v["type"] == "event" && v["causedBy"] == cmd_id).await;
     assert_eq!(kds_event["cmd"], "nueva_comanda");
+    assert_eq!(kds_event["payload"]["mesa"], 1);
     assert!(kds_event["serverTime"].as_u64().unwrap() > 0, "el evento lleva serverTime del hub");
 
     // --- Propiedad 2: deduplicación por UUID ---
@@ -117,11 +128,111 @@ async fn protocolo_multiterminal_verde_en_rust() {
     // --- Propiedad 3: reconexión — KDS se cae, se manda otra comanda, reconecta y hace replay ---
     drop(kds);
     let cmd_id_2 = uuid::Uuid::new_v4().to_string();
-    let cmd2 = json!({ "type": "cmd", "id": cmd_id_2, "cmd": "nueva_comanda", "payload": { "mesa": 3 } });
+    let cmd2 = json!({
+        "type": "cmd", "id": cmd_id_2, "cmd": "nueva_comanda",
+        "payload": { "tableNumber": 4, "items": [{ "productId": "mi_flan", "cantidad": 1 }] }
+    });
     mesero.send(Message::Text(cmd2.to_string())).await.unwrap();
-    let _ack2 = next_json_matching(&mut mesero, |v| v["type"] == "ack" && v["id"] == cmd_id_2).await;
+    let ack2 = next_json_matching(&mut mesero, |v| v["type"] == "ack" && v["id"] == cmd_id_2).await;
+    assert_eq!(ack2["status"], "ok", "ack2: {ack2:?}");
 
     let mut kds_reconnected = connect(port, "kds", "cocina-1", 0).await;
     let replayed = next_json_matching(&mut kds_reconnected, |v| v["type"] == "event" && v["causedBy"] == cmd_id_2).await;
     assert_eq!(replayed["cmd"], "nueva_comanda", "el KDS reconectado recibe por replay lo que se perdió offline");
+}
+
+/// Fase 6 §10.1/§10.3: el hub persiste comandas en SQLite (sobrevive
+/// reinicios, no solo el proceso vivo) y el bump a 'en_preparacion' descuenta
+/// inventario por receta como caso de uso real (no un test manual aparte).
+#[test]
+fn persistencia_y_descuento_de_inventario_por_receta() {
+    use app_lib::commands::*;
+    use rusqlite::params;
+
+    let dir = std::env::temp_dir().join(format!("restaurantos-hub-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db_path = dir.join("hub.db");
+    let db_path_str = db_path.to_str().unwrap();
+
+    // "Primer arranque": abre, migra, siembra, procesa una comanda.
+    let order_id = {
+        let conn = db::open_and_migrate(db_path_str, Path::new("../../docs/db/migrations"));
+        seed::seed(&conn, now_ms());
+
+        let payload: NuevaComandaPayload = serde_json::from_value(json!({
+            "tableNumber": 2,
+            "items": [{ "productId": "mi_tacos_pastor", "cantidad": 2, "modificadores": [{"groupId":"mg_salsa","optionId":"op_salsa_verde"}] }]
+        })).unwrap();
+        let result = handle_nueva_comanda(&conn, &payload).expect("nueva_comanda debe procesar sin error");
+        let order_id = result["orderId"].as_str().unwrap().to_string();
+        let item_id = result["items"][0]["orderItemId"].as_str().unwrap().to_string();
+
+        // tortilla: 1000 iniciales - 3*2 = 994
+        let tortilla_before: f64 = conn.query_row("SELECT qty FROM inventory WHERE product_id='insumo-tortilla'", [], |r| r.get(0)).unwrap();
+        assert_eq!(tortilla_before, 1000.0, "aún no se ha preparado nada");
+
+        let bump: BumpPlatilloPayload = serde_json::from_value(json!({ "orderItemId": item_id, "nextStatus": "en_preparacion" })).unwrap();
+        handle_bump_platillo(&conn, &bump).expect("bump_platillo debe procesar sin error");
+
+        let tortilla_after: f64 = conn.query_row("SELECT qty FROM inventory WHERE product_id='insumo-tortilla'", [], |r| r.get(0)).unwrap();
+        assert_eq!(tortilla_after, 994.0, "el descuento por receta (3 tortillas x 2 piezas) se aplicó de verdad");
+
+        order_id
+        // `conn` se cierra aquí — simula el fin del proceso
+    };
+
+    // "Segundo arranque": abre el MISMO archivo — la comanda y el stock deben seguir ahí.
+    {
+        let conn = db::open_and_migrate(db_path_str, Path::new("../../docs/db/migrations"));
+        let status: String = conn.query_row("SELECT status FROM orders WHERE id = ?1", params![order_id], |r| r.get(0)).unwrap();
+        assert_eq!(status, "abierta", "la comanda sobrevivió al reinicio del proceso");
+
+        let tortilla: f64 = conn.query_row("SELECT qty FROM inventory WHERE product_id='insumo-tortilla'", [], |r| r.get(0)).unwrap();
+        assert_eq!(tortilla, 994.0, "el inventario descontado también sobrevivió al reinicio");
+
+        // Fase 6 §10.2: cobrar la comanda genera una venta real y la cierra.
+        let checkout: CheckoutPayload = serde_json::from_value(json!({
+            "orderId": order_id, "paymentMethod": "efectivo", "tipCents": 1000
+        })).unwrap();
+        let sale = handle_checkout(&conn, &checkout).expect("el cobro debe procesar sin error");
+        assert_eq!(sale["saleIds"].as_array().unwrap().len(), 1);
+        assert!(sale["totalCents"].as_i64().unwrap() > 0);
+
+        let order_status: String = conn.query_row("SELECT status FROM orders WHERE id = ?1", params![order_id], |r| r.get(0)).unwrap();
+        assert_eq!(order_status, "cerrada", "cobrar cierra la comanda (dispara el trigger de mesa 'por_limpiar')");
+
+        let table_status: String = conn.query_row(
+            "SELECT t.status FROM tables t JOIN orders o ON o.table_id = t.id WHERE o.id = ?1",
+            params![order_id], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(table_status, "por_limpiar");
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Fase 6 §10.5: turno + propina con reparto (modo 'individual' del seed).
+#[test]
+fn turno_y_propina_se_reparten_al_cerrar() {
+    use app_lib::commands::*;
+
+    let conn = fresh_seeded_db();
+    let opened = open_shift(&conn, seed::EMPLOYEE_MESERO).expect("abrir turno");
+    let shift_id = opened["shiftId"].as_str().unwrap().to_string();
+
+    let payload: NuevaComandaPayload = serde_json::from_value(json!({
+        "tableNumber": 1, "items": [{ "productId": "mi_flan", "cantidad": 1 }]
+    })).unwrap();
+    let order = handle_nueva_comanda(&conn, &payload).unwrap();
+    let checkout: CheckoutPayload = serde_json::from_value(json!({
+        "orderId": order["orderId"], "paymentMethod": "efectivo", "tipCents": 2000, "shiftId": shift_id
+    })).unwrap();
+    handle_checkout(&conn, &checkout).unwrap();
+
+    let closed = close_shift(&conn, &shift_id).expect("cerrar turno");
+    assert_eq!(closed["totalTipsCents"], 2000);
+
+    let summary = tips_summary_json(&conn);
+    let dist = summary.as_array().unwrap().iter().find(|d| d["shiftId"] == shift_id).unwrap();
+    assert_eq!(dist["amountCents"], 2000, "modo individual: el mesero se queda el 100% de su propina");
 }

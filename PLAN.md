@@ -229,31 +229,33 @@ verificado contra el binario compilado (`cargo run`), no solo contra tests.
 **Lo que falta para cerrar Fase 6** (orden sugerido, cada uno independiente
 salvo donde se anota dependencia):
 
-1. **Persistir el hub en SQLite** (hoy `event_log`/`seen_command_ids` viven
-   en memoria del proceso Rust — se pierden al reiniciar). Usar las tablas
-   `orders`/`order_items`/`order_item_events` de 0012 como destino real de
-   los comandos `nueva_comanda`/`bump_platillo`, con outbox transaccional
-   igual que `pos-inteligente/docs/sync/protocolo.md`. **Bloquea** que Caja
-   pueda leer comandas reales para cobrar.
-2. **Pantalla de Caja** (hub Tauri, no PWA): plano de mesas (`FloorPlan` ya
-   existe) → ver comanda abierta → `SplitBillSheet`/`TipSelector`/`NumPad`
-   (ya existen como componentes, faltan integrarlos) → cobrar → genera venta
-   real sobre 0006 + `order_sales`. Depende de (1).
-3. **Descuento de inventario por receta real**: hoy solo se probó a mano en
-   `restaurantSchema.test.ts`. Envolver en un caso de uso
-   `sendItemToKitchen` (dominio) que el hub dispare al procesar
-   `bump_platillo` hacia `en_preparacion`.
+1. ✅ **Persistir el hub en SQLite** — `app/src-tauri/src/{db,seed,commands}.rs`
+   + migración `0017_hub_lan_log.sql`. `hub_events`/`hub_commands` sobreviven
+   reinicios (verificado abriendo el mismo archivo dos veces en
+   `persistencia_y_descuento_de_inventario_por_receta`). `nueva_comanda` y
+   `bump_platillo` escriben de verdad sobre `orders`/`order_items`.
+2. ✅ **Pantalla de Caja** — `app/src/ui/screens/CajaScreen.tsx`
+   (`?role=caja`): lista de comandas abiertas (vía `GET /orders/open`,
+   refrescada por WS rol `caja`), `SplitBillSheet`/`TipSelector`/`Segmented`
+   integrados, cobra vía `POST /checkout` (genera venta con hash chain real
+   + cierra la comanda, dispara el trigger de mesa→`por_limpiar`).
+3. ✅ **Descuento de inventario por receta real** — `handle_bump_platillo`
+   en `commands.rs`: al pasar a `en_preparacion` lee la receta y escribe
+   `inventory_movements` de verdad (no un test manual).
 4. **Impresión real**: cablear `spikes/escpos/{encoder,tickets}.mjs` (portar
    a TS dentro de `app/src/infra/`) con el transporte WebUSB/Serial ya
    existente en pos-inteligente (`thermalPrinter.ts`, aún no copiado a este
    repo). Sigue ⛔ la validación con impresora física (spike 2).
-5. **Turnos y propinas en UI**: `TipSelector` existe; falta pantalla de
-   apertura/cierre de turno y el cálculo de reparto configurable (0014) con
-   datos reales en vez del test manual.
+5. ✅ **Turnos y propinas en UI** — botones abrir/cerrar turno en
+   `CajaScreen.tsx` vía `POST /shifts/open|close`; propina capturada en el
+   cobro se reparte al cerrar turno (modo `individual`, `close_shift` en
+   `commands.rs`).
 6. **RBAC/PIN**: copiar el módulo de pos-inteligente (`PinModal.tsx` que se
    quitó del scaffold inicial por no usarse aún, más la lógica de
    `employees`/`roles` ya en 0002) y aplicar permisos por pantalla/dispositivo
-   (docs/permisos-plugins.md).
+   (docs/permisos-plugins.md). Nota: `CajaScreen` hoy hardcodea
+   `EMPLOYEE_MESERO` para el turno — esto es lo que RBAC debe reemplazar por
+   selección real de empleado/PIN.
 7. **Backup cifrado**: copiar el módulo de pos-inteligente tal cual (ADR-1).
 8. **Asistente IA v1**: conectar `OllamaAIClient` de pos-inteligente contra
    las vistas nuevas de 0016 (`v_dish_sales_margin`, `v_tips_by_shift`, etc.)
@@ -310,11 +312,13 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   validado (protocolo + PWA estática, 2/2 tests). Pairing MVP. ⛔ empaquetado
   real (MSI/NSIS), updater y resource bundling de la PWA en producción
   pendientes (2026-07-03) — ver docs/spikes/spike-5-hub-rust.md.
-- 🟡 Fase 6 MVP — ARRANCADA: mesero↔hub Rust↔KDS funcionando end-to-end real
-  (verificado contra el binario compilado, no solo tests). Falta el resto de
-  §7 (caja/cortes, impresión real, RBAC, backup, IA, turnos/propinas en UI,
-  persistencia del hub) — ver §10 para el desglose y orden sugerido
-  (2026-07-03).
+- 🟡 Fase 6 MVP — 4/9 puntos de §10 completos: (1) hub persistido en SQLite,
+  (2) Caja funcional (ver/dividir/cobrar), (3) descuento de inventario por
+  receta como caso de uso real, (5) turnos/propinas en UI. Mesero↔hub↔KDS↔Caja
+  funcionando de punta a punta contra el binario real (comanda→bump→cobro→
+  turno cerrado con propina repartida, verificado con scripts WS+HTTP en
+  vivo, no solo tests). Falta: (4) impresión real, (6) RBAC/PIN, (7) backup
+  cifrado, (8) asistente IA v1, (9) pairing real (2026-07-04).
 - ⬜ Fases 7–8 — sin empezar, ver §9.
 
 ## Bitácora
@@ -495,3 +499,68 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     y ahora también: confirmar si vale la pena invertir tiempo en
     `tauri build` (WiX/NSIS) antes de tener más módulos de negocio listos,
     o si conviene seguir iterando en `cargo build`/`npm run dev` un poco más.
+- 2026-07-04: Fase 6, puntos 1/2/3/5 de §10 completados (modo autónomo total).
+  - **Punto 1 — Hub persistido en SQLite**: `app/src-tauri/src/db.rs`
+    (migration runner IDEMPOTENTE — ver bug encontrado abajo),
+    `app/src-tauri/src/seed.rs` (mismos ids que el prototipo de Fase 3:
+    `mi_tacos_pastor`, `table-1`..`table-5`, etc. — el frontend YA NO tiene
+    un seed local propio, ahora consume `GET /menu`/`GET /tables` del hub) y
+    `app/src-tauri/src/commands.rs` (lógica de dominio). Nueva migración
+    `0017_hub_lan_log.sql` (`hub_events`/`hub_commands`) reemplaza el
+    `Vec`/`HashSet` en memoria del prototipo de Fase 5 — sobrevive reinicios,
+    verificado abriendo el MISMO archivo `.db` dos veces en el test
+    `persistencia_y_descuento_de_inventario_por_receta`.
+  - **Punto 3 — Descuento de inventario por receta real**: `handle_bump_platillo`
+    en `commands.rs` lee la receta del producto y escribe
+    `inventory_movements` de verdad al pasar a `en_preparacion` (el trigger
+    0010 ya existente materializa `inventory.qty`) — ya no es un test manual,
+    es el flujo real que dispara el hub.
+  - **Punto 2 — Pantalla de Caja**: `app/src/ui/screens/CajaScreen.tsx`
+    (ruta `?role=caja`). Lista de comandas abiertas vía `GET /orders/open`
+    (refrescada al vuelo por eventos WS rol `caja`), selecciona una,
+    `Segmented` para método de pago, `TipSelector`, `SplitBillSheet` →
+    `POST /checkout` genera venta(s) con secuencia + cadena de hash real
+    (`sha2`) y cierra la comanda (dispara el trigger mesa→`por_limpiar`).
+    División de cuenta por partes genera ventas sintéticas "N de M" sin
+    desglose por ítem — simplificación de MVP documentada en `commands.rs`.
+  - **Punto 5 — Turnos y propinas en UI**: botones abrir/cerrar turno en
+    `CajaScreen`, `POST /shifts/open|close`; la propina capturada en el cobro
+    se liga al turno y se reparte al cerrarlo (`tip_pool_configs` modo
+    `individual`, ya seedeado). Modos `pool_turno`/`pool_ventas` caen a
+    individual con log de advertencia — DECISIÓN AUTÓNOMA (no hay más de un
+    turno simultáneo en el seed demo para probar reparto grupal real).
+  - **2 bugs reales encontrados y corregidos** (no cosméticos, rompían el
+    flujo):
+    1. Columna `notas` vs `notes`: el SQL de `commands.rs` usaba `notas`
+       (español) pero la migración 0012 define la columna como `notes`
+       (inglés, convención del esquema heredado) — todo INSERT/SELECT sobre
+       `order_items` fallaba. Corregido a `notes` en el SQL (los nombres
+       Rust/JSON siguen en español, solo las columnas SQL en inglés).
+    2. **Migraciones NO eran idempotentes entre reinicios**: `migrate.ts`
+       (Node) siempre corre contra una BD nueva y nunca necesitó chequear
+       `schema_migrations`; el hub Rust SÍ reabre el mismo archivo entre
+       arranques, y re-ejecutar `INSERT INTO schema_migrations` sin
+       protección rompía con `UNIQUE constraint failed`. `db.rs` ahora lee
+       las versiones ya aplicadas y salta esos archivos — este bug solo
+       podía aparecer aquí porque Fase 6 es la primera vez que algo en el
+       proyecto reabre un `.db` persistido entre "reinicios" reales.
+    3. (menor) `tips.method`/`payments.method` usan claves en inglés
+       (`cash`/`card`, CHECK constraint en 0014) pero la API habla español
+       (`efectivo`/`tarjeta`, igual que el ticket ESC/POS del spike 2) —
+       se agregó `normalize_payment_method` en la frontera.
+  - **Verificado de punta a punta contra el binario REAL** (no solo
+    `cargo test`): `cargo run` con `RESTAURANTOS_PWA_DIR=../dist`, scripts
+    Node con `ws`+`fetch` reales simulando mesero/KDS/Caja: comanda creada →
+    KDS la recibe → bump a `en_preparacion` (inventario descontado,
+    confirmado por `cargo test`) → `GET /orders/open` la muestra → `POST
+    /checkout` genera venta y cierra la mesa (`por_limpiar` confirmado en
+    `GET /tables`) → turno abierto/cerrado con propina de $30 repartida
+    (`GET /tips/summary` lo confirma). Hub detenido limpiamente al terminar.
+  - **Verificado con tests**: `cargo test` 4/4 (protocolo, PWA estática,
+    persistencia+receta, turno+propina), `npm test` 20/20 (se corrigió una
+    aserción vieja que esperaba 16 migraciones, ahora 17), typecheck y
+    build limpios en ambos lenguajes.
+  - Docs actualizados: `docs/db/schema-overview-restaurante.md` (0017 +
+    sección "Actualización Fase 6").
+  - Próximo: puntos 4 (impresión), 6 (RBAC/PIN), 7 (backup), 8 (IA), 9
+    (pairing real) de §10, en ese orden, luego Fases 7–8.

@@ -30,9 +30,15 @@ tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 axum = { version = "0.7", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.5", features = ["fs"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v7"] }
 rand = "0.8"
 futures = "0.3"
+
+# Persistencia del hub (Fase 6 §10.1): SQLite embebido, mismas migraciones
+# que docs/db/migrations/ (fuente de verdad del esquema, compartida con Node).
+rusqlite = { version = "0.32", features = ["bundled"] }
+regex = "1"
+sha2 = "0.10"
 
 [dev-dependencies]
 tokio-tungstenite = "0.24"

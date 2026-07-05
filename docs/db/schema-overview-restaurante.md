@@ -1,4 +1,4 @@
-# Esquema restaurantero — resumen (0012–0016)
+# Esquema restaurantero — resumen (0012–0017)
 
 > Complementa `docs/db/README.md` (convenciones, heredadas tal cual de
 > pos-inteligente) y `~/pos-inteligente/docs/db/schema-overview.md` (0001-0011,
@@ -14,6 +14,7 @@
 | 0014 | turnos_propinas | `shifts`, `tips`, `tip_pool_configs`, `shift_tip_distributions` |
 | 0015 | cfdi | `cfdi_issuers`, `cfdi_documents`, `cfdi_conceptos`, `cfdi_pago_complementos` |
 | 0016 | triggers_vistas_restaurante | 2 triggers mecánicos (mesa↔comanda) + 6 vistas de reporte |
+| 0017 | hub_lan_log | `hub_commands` (dedup por UUID), `hub_events` (replay del protocolo LAN) — Fase 6 §10.1, ver `docs/spikes/spike-5-hub-rust.md` |
 
 ## Relación con el esquema heredado
 
@@ -47,14 +48,28 @@ comanda (trigger→por_limpiar) → venta+pago → turno+propina
 (`v_tips_by_shift`) → margen del platillo (`v_dish_sales_margin`)— y pasa
 (20/20 tests, typecheck y build limpios).
 
-## Pendiente (no bloquea Fase 5)
+## Actualización Fase 6 (0017 + comandos reales sobre Rust)
 
-- `modifier_recipe_deltas` (cómo un modificador altera la receta efectiva) se
-  modeló pero no se ejercitó en el test end-to-end — el ejemplo sembrado
-  (salsa) no tiene impacto de receta. Cubrir con un caso "sin cebolla" cuando
-  se construya el caso de uso real de Fase 6.
-- El descuento de inventario en el test se hizo a mano (simulando la TX);
-  Fase 6 lo envuelve en un caso de uso `sendItemToKitchen` real con outbox,
-  igual patrón que `checkoutSale` de pos-inteligente.
-- Migraciones CFDI (0015) no se ejercitaron con datos en este spike — se
-  activan hasta Fase 7 cuando haya cuenta de PAC real (spike 3).
+El hub Rust (`app/src-tauri/src/commands.rs`) ya escribe de verdad sobre
+`orders`/`order_items`/`order_item_modifiers` al procesar `nueva_comanda`, y
+descuenta inventario por receta (0013) al procesar `bump_platillo` hacia
+`en_preparacion` — el caso de uso `sendItemToKitchen` que este documento
+marcaba como pendiente ya existe (`handle_bump_platillo`), verificado con
+persistencia real entre "reinicios" (`persistencia_y_descuento_de_inventario_por_receta`
+en `src-tauri/tests/hub_test.rs`, no un test manual). El cobro (`handle_checkout`)
+genera venta(s) con hash chain real y cierra la comanda; turnos/propinas
+(`open_shift`/`close_shift`) reparten en modo `individual` (0014).
+
+## Pendiente
+
+- `modifier_recipe_deltas` (cómo un modificador altera la receta efectiva)
+  sigue sin ejercitarse con un caso real ("sin cebolla") — el modelo existe,
+  falta el caso de uso que lo lea al calcular el descuento.
+- Modos de reparto de propina `pool_turno`/`pool_ventas` (0014) no están
+  implementados — `close_shift` cae a reparto individual con un log de
+  advertencia (DECISIÓN AUTÓNOMA, ver PLAN.md bitácora Fase 6).
+- Migraciones CFDI (0015) siguen sin ejercitarse con datos — Fase 7,
+  cuando haya cuenta de PAC real (spike 3).
+- División de cuenta (`partes_iguales`/`por_comensal`) genera ventas
+  sintéticas de "N de M" sin desglose por ítem — simplificación de MVP,
+  documentada en `commands.rs`.

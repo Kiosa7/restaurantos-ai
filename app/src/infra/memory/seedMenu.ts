@@ -1,3 +1,6 @@
+// Fixture de solo-lectura para tests de dominio puro (comandaFlow.test.ts).
+// La UI real ya NO usa este archivo: desde Fase 6 §10.1 el menú viene de
+// `GET /menu` sobre el hub (mismos ids, ver app/src-tauri/src/seed.rs).
 import { fromMajor } from "@domain/money";
 import type { Categoria, MenuItem } from "@domain/menu";
 

@@ -1,4 +1,7 @@
+pub mod commands;
+pub mod db;
 pub mod hub;
+pub mod seed;
 
 use std::path::PathBuf;
 
@@ -15,7 +18,17 @@ fn spawn_hub_server() {
             .expect("no se pudo iniciar el runtime async del hub");
 
         rt.block_on(async {
-            let state = hub::HubState::new();
+            // BD del hub: persiste comandas/inventario/ventas/turnos entre
+            // reinicios (Fase 6 §10.1). Ruta configurable para dev/tests;
+            // producción empaquetada la resuelve contra el resource dir
+            // (pendiente, ver docs/spikes/spike-5-hub-rust.md).
+            let db_path = std::env::var("RESTAURANTOS_DB_PATH").unwrap_or_else(|_| "restaurantos-hub.db".into());
+            let migrations_dir = std::env::var("RESTAURANTOS_MIGRATIONS_DIR").unwrap_or_else(|_| "../../docs/db/migrations".into());
+            let conn = db::open_and_migrate(&db_path, std::path::Path::new(&migrations_dir));
+            seed::seed(&conn, commands::now_ms());
+
+            let state = hub::HubState::new(conn);
+
             // En dev, la PWA la sirve `vite` (puerto 5190 de app/vite.config.ts,
             // que por eso NO corre al mismo tiempo que este binario en dev);
             // en producción empaquetada, el hub sirve el build estático desde

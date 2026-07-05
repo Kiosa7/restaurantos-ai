@@ -1,0 +1,135 @@
+import { useEffect, useRef, useState } from "react";
+import { Button, Card, Segmented } from "@ui/components/ui";
+import { SplitBillSheet, TipSelector, type SplitMode } from "@ui/components/restaurant";
+import { formatMoney, cents } from "@domain/money";
+import { HubClient } from "@infra/hub/hubClient";
+import { checkout, closeShift, fetchOpenOrders, openShift, type OpenOrder } from "@infra/hub/hubApi";
+
+// MVP (Fase 6 §10.5/§10.6): un solo mesero de turno del seed demo. La
+// selección real de empleado/PIN llega con RBAC (§10.6, aún no implementado).
+const EMPLOYEE_MESERO = "e-mesero";
+
+/** Caja: ve las comandas abiertas del hub, divide y cobra (Fase 6 §10.2). */
+export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http://localhost:5190" }: { hubUrl?: string; apiUrl?: string }) {
+  const [orders, setOrders] = useState<OpenOrder[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<"efectivo" | "tarjeta">("efectivo");
+  const [tipPct, setTipPct] = useState<number | "otro" | null>(null);
+  const [cobrando, setCobrando] = useState(false);
+  const [ultimoCobro, setUltimoCobro] = useState<string | null>(null);
+  const [shiftId, setShiftId] = useState<string | null>(null);
+  const [turnoResumen, setTurnoResumen] = useState<string | null>(null);
+  const hubRef = useRef<HubClient | null>(null);
+
+  async function refrescarOrdenes() {
+    setOrders(await fetchOpenOrders(apiUrl));
+  }
+
+  useEffect(() => {
+    refrescarOrdenes();
+    const client = new HubClient({ url: `${hubUrl}?role=caja&device=caja-1`, onEvent: () => refrescarOrdenes() });
+    hubRef.current = client;
+    return () => client.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hubUrl, apiUrl]);
+
+  const selected = orders.find((o) => o.orderId === selectedId) ?? null;
+  const tipCents = selected && tipPct && tipPct !== "otro" ? Math.round((selected.totalCents * tipPct) / 100) : 0;
+
+  async function abrirTurno() {
+    const r = await openShift(EMPLOYEE_MESERO, apiUrl);
+    setShiftId(r.shiftId);
+    setTurnoResumen(null);
+  }
+
+  async function cerrarTurno() {
+    if (!shiftId) return;
+    const r = await closeShift(shiftId, apiUrl);
+    setTurnoResumen(`Turno cerrado. Propinas repartidas: ${formatMoney(cents(r.totalTipsCents))}`);
+    setShiftId(null);
+  }
+
+  async function cobrar(mode: SplitMode, partes: number) {
+    if (!selected) return;
+    setCobrando(true);
+    try {
+      const res = await checkout(
+        { orderId: selected.orderId, splitMode: mode, partes, paymentMethod, tipCents, shiftId: shiftId ?? undefined },
+        apiUrl,
+      );
+      setUltimoCobro(`Mesa ${res.mesa}: ${res.partes} venta(s) por ${formatMoney(cents(res.totalCents))} total.`);
+      setSelectedId(null);
+      setTipPct(null);
+      await refrescarOrdenes();
+    } catch (e) {
+      setUltimoCobro(`Error al cobrar: ${(e as Error).message}`);
+    } finally {
+      setCobrando(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[1fr_22rem]">
+      <div>
+        <div className="mb-4 flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-slate-800">Caja — comandas abiertas</h1>
+          <div className="flex items-center gap-2">
+            {shiftId ? (
+              <Button size="sm" variant="outline" onClick={cerrarTurno}>Cerrar turno</Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={abrirTurno}>Abrir turno</Button>
+            )}
+          </div>
+        </div>
+        {turnoResumen && <p className="mb-3 text-sm text-success">{turnoResumen}</p>}
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {orders.map((o) => (
+            <button
+              key={o.orderId}
+              type="button"
+              onClick={() => { setSelectedId(o.orderId); setTipPct(null); }}
+              className={`min-h-[var(--spacing-touch)] rounded-[var(--radius-card)] border-2 p-4 text-left shadow-sm transition-all active:scale-[0.98] ${
+                selectedId === o.orderId ? "border-brand bg-brand-soft" : "border-slate-200 bg-white hover:bg-slate-50"
+              }`}
+            >
+              <p className="text-lg font-semibold text-slate-800">Mesa {o.mesa}</p>
+              <p className="text-sm text-slate-500">{o.items.length} platillo(s)</p>
+              <p className="font-bold text-slate-800">{formatMoney(cents(o.totalCents))}</p>
+            </button>
+          ))}
+          {orders.length === 0 && <p className="text-slate-400">No hay comandas abiertas.</p>}
+        </div>
+      </div>
+
+      <Card className="h-fit p-4">
+        {!selected && <p className="text-slate-400">Selecciona una mesa para cobrar.</p>}
+        {selected && (
+          <div className="flex flex-col gap-4">
+            <h2 className="font-semibold text-slate-800">Mesa {selected.mesa}</h2>
+            <ul className="flex flex-col gap-2 text-sm">
+              {selected.items.map((it) => (
+                <li key={it.orderItemId} className="flex justify-between border-b border-slate-100 pb-1">
+                  <span>{it.cantidad}× {it.nombre}</span>
+                  <span className="text-slate-500">{formatMoney(cents(it.lineTotalCents))}</span>
+                </li>
+              ))}
+            </ul>
+
+            <Segmented
+              value={paymentMethod}
+              onChange={(v) => setPaymentMethod(v as "efectivo" | "tarjeta")}
+              options={[{ value: "efectivo", label: "Efectivo" }, { value: "tarjeta", label: "Tarjeta" }]}
+            />
+
+            <TipSelector totalCents={cents(selected.totalCents)} value={tipPct} onChange={setTipPct} />
+
+            <SplitBillSheet totalCents={cents(selected.totalCents + tipCents)} onConfirm={cobrar} />
+            {cobrando && <p className="text-sm text-slate-500">Procesando cobro…</p>}
+          </div>
+        )}
+        {ultimoCobro && <p className="mt-3 text-sm text-slate-600">{ultimoCobro}</p>}
+      </Card>
+    </div>
+  );
+}

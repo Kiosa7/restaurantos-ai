@@ -3,23 +3,25 @@ import { Button, Card } from "@ui/components/ui";
 import { FloorPlan, ModifierPicker, type FloorTable } from "@ui/components/restaurant";
 import { formatMoney } from "@domain/money";
 import { createDraftOrder, orderTotalCents, type DraftOrder } from "@domain/order";
-import type { MenuItem } from "@domain/menu";
-import { categoriasSeed, menuSeed } from "@infra/memory/seedMenu";
+import type { Categoria, MenuItem } from "@domain/menu";
 import { addItemByTapping } from "@ui/flows/comandaFlow";
 import { HubClient } from "@infra/hub/hubClient";
-
-const mesasSeed: FloorTable[] = [
-  { id: "t1", numero: 1, estado: "libre", capacidad: 4 },
-  { id: "t2", numero: 2, estado: "ocupada", capacidad: 2 },
-  { id: "t3", numero: 3, estado: "por_limpiar", capacidad: 6 },
-  { id: "t4", numero: 4, estado: "libre", capacidad: 4 },
-  { id: "t5", numero: 5, estado: "reservada", capacidad: 8 },
-];
+import { fetchMenu, fetchTables } from "@infra/hub/hubApi";
 
 type Vista = { paso: "mesas" } | { paso: "categorias" } | { paso: "platillos"; categoriaId: string } | { paso: "modificadores"; item: MenuItem };
 
-/** Pantalla del mesero: FloorPlan → categoría → platillo → (modificadores) → comanda. Flujo 1 de docs/ux/flujos-casos-uso.md. */
-export function MeseroScreen({ hubUrl = "ws://localhost:5190/ws" }: { hubUrl?: string }) {
+/**
+ * Pantalla del mesero: FloorPlan → categoría → platillo → (modificadores) →
+ * comanda. Flujo 1 de docs/ux/flujos-casos-uso.md. El menú y las mesas vienen
+ * del hub real (`GET /menu`, `GET /tables` — Fase 6 §10.1), no de datos
+ * locales: lo que el mesero ve es el catálogo persistido en SQLite.
+ */
+export function MeseroScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http://localhost:5190" }: { hubUrl?: string; apiUrl?: string }) {
+  const [mesas, setMesas] = useState<FloorTable[]>([]);
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [cargando, setCargando] = useState(true);
+
   const [mesa, setMesa] = useState<FloorTable | null>(null);
   const [order, setOrder] = useState<DraftOrder | null>(null);
   const [vista, setVista] = useState<Vista>({ paso: "mesas" });
@@ -27,6 +29,16 @@ export function MeseroScreen({ hubUrl = "ws://localhost:5190/ws" }: { hubUrl?: s
   const [enviado, setEnviado] = useState(false);
   const [conectado, setConectado] = useState(false);
   const hubRef = useRef<HubClient | null>(null);
+
+  useEffect(() => {
+    Promise.all([fetchMenu(apiUrl), fetchTables(apiUrl)])
+      .then(([menu, tables]) => {
+        setCategorias(menu.categorias);
+        setMenuItems(menu.items);
+        setMesas(tables);
+      })
+      .finally(() => setCargando(false));
+  }, [apiUrl]);
 
   useEffect(() => {
     const client = new HubClient({ url: `${hubUrl}?role=mesero&device=tablet-1`, onHello: () => setConectado(true), onEvent: () => {} });
@@ -37,8 +49,13 @@ export function MeseroScreen({ hubUrl = "ws://localhost:5190/ws" }: { hubUrl?: s
   function enviarAcocina() {
     if (!order || order.items.length === 0) return;
     hubRef.current?.sendCommand("nueva_comanda", {
-      mesa: order.mesa,
-      items: order.items.map((it) => ({ producto: it.nombre, cantidad: it.cantidad })),
+      tableNumber: order.mesa,
+      items: order.items.map((it) => ({
+        productId: it.menuItemId,
+        cantidad: it.cantidad,
+        modificadores: it.modificadores.map((m) => ({ groupId: m.groupId, optionId: m.optionId })),
+        notas: it.notas || undefined,
+      })),
     });
     setEnviado(true);
   }
@@ -58,6 +75,10 @@ export function MeseroScreen({ hubUrl = "ws://localhost:5190/ws" }: { hubUrl?: s
     setVista({ paso: "categorias" });
   }
 
+  if (cargando) {
+    return <p className="p-4 text-slate-500">Cargando menú y mesas del hub…</p>;
+  }
+
   return (
     <div className="mx-auto grid max-w-5xl gap-6 p-4 md:grid-cols-[1fr_20rem]">
       <div>
@@ -65,11 +86,11 @@ export function MeseroScreen({ hubUrl = "ws://localhost:5190/ws" }: { hubUrl?: s
           {mesa ? `Mesa ${mesa.numero}` : "Selecciona una mesa"}
         </h1>
 
-        {vista.paso === "mesas" && <FloorPlan tables={mesasSeed} onSelect={seleccionarMesa} selectedTableId={mesa?.id} />}
+        {vista.paso === "mesas" && <FloorPlan tables={mesas} onSelect={seleccionarMesa} selectedTableId={mesa?.id} />}
 
         {vista.paso === "categorias" && (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {categoriasSeed.map((c) => (
+            {categorias.map((c) => (
               <Button key={c.id} variant="outline" size="lg" onClick={() => setVista({ paso: "platillos", categoriaId: c.id })}>
                 {c.nombre}
               </Button>
@@ -82,7 +103,7 @@ export function MeseroScreen({ hubUrl = "ws://localhost:5190/ws" }: { hubUrl?: s
 
         {vista.paso === "platillos" && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {menuSeed
+            {menuItems
               .filter((m) => m.categoria === vista.categoriaId)
               .map((item) => (
                 <button

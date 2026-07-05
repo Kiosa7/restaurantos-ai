@@ -3,3 +3,6 @@ node_modules/
 results*.json
 target/
 gen/
+*.db
+*.db-shm
+*.db-wal
