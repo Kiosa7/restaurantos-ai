@@ -145,6 +145,7 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/shifts/open", post(post_shift_open))
         .route("/shifts/close", post(post_shift_close))
         .route("/tips/summary", get(get_tips_summary))
+        .route("/backup/export", get(get_backup_export))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -188,6 +189,11 @@ async fn get_tables(State(state): State<Arc<HubState>>) -> impl IntoResponse {
 async fn get_open_orders(State(state): State<Arc<HubState>>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
     Json(commands::open_orders_json(&conn))
+}
+
+async fn get_backup_export(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::backup::build_snapshot(&conn, now_ms() as i64))
 }
 
 fn domain_error_response(msg: String) -> axum::response::Response {

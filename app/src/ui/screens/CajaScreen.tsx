@@ -6,9 +6,12 @@ import { HubClient } from "@infra/hub/hubClient";
 import { checkout, closeShift, fetchOpenOrders, openShift, type OpenOrder } from "@infra/hub/hubApi";
 import { cuentaTicket } from "@infra/print/tickets";
 import { printTicket } from "@infra/print/printClient";
+import { BackupPanel } from "@ui/components/BackupPanel";
 
-// MVP (Fase 6 §10.5/§10.6): un solo mesero de turno del seed demo. La
-// selección real de empleado/PIN llega con RBAC (§10.6, aún no implementado).
+// MVP (Fase 6 §10.5): un solo mesero de turno del seed demo. RBAC/PIN (§10.6)
+// ya autentica a quien opera la Caja (ver PinGate en App.tsx), pero el turno
+// se sigue abriendo a nombre de este empleado fijo — usar el mesero real
+// (otro PIN, distinto del cajero) queda para Fase 7.
 const EMPLOYEE_MESERO = "e-mesero";
 
 /** Caja: ve las comandas abiertas del hub, divide y cobra (Fase 6 §10.2). */
@@ -163,6 +166,10 @@ export function CajaScreen({ hubUrl = "ws://localhost:5190/ws", apiUrl = "http:/
           </div>
         )}
       </Card>
+
+      <div className="md:col-span-2">
+        <BackupPanel apiUrl={apiUrl} />
+      </div>
     </div>
   );
 }

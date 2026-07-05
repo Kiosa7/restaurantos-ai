@@ -253,3 +253,19 @@ fn login_por_pin_identifica_al_empleado_y_sus_permisos() {
     let bad = pin_login(&conn, "0000");
     assert!(bad.is_err(), "un PIN que no existe debe rechazarse");
 }
+
+/// Fase 6 §10.7: el snapshot de respaldo incluye datos reales sembrados
+/// (el cifrado en sí vive en el navegador, ver encryptedBackup.ts).
+#[test]
+fn snapshot_de_respaldo_incluye_catalogo_y_mesas_sembradas() {
+    use app_lib::{backup, commands::now_ms};
+
+    let conn = fresh_seeded_db();
+    let snapshot = backup::build_snapshot(&conn, now_ms());
+
+    assert_eq!(snapshot["version"], "restaurantos-1");
+    let tables = &snapshot["tables"];
+    assert!(tables["products"].as_array().unwrap().len() >= 4, "incluye el menú sembrado");
+    assert!(tables["tables"].as_array().unwrap().len() == 5, "incluye las 5 mesas sembradas");
+    assert!(tables["employees"].as_array().unwrap().iter().any(|e| e["id"] == seed::EMPLOYEE_CAJERO));
+}

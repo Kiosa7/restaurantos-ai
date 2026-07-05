@@ -267,7 +267,15 @@ salvo donde se anota dependencia):
    cajero) — NO son un mecanismo de seguridad real para producción.
    Pendiente: `CajaScreen` sigue hardcodeando `EMPLOYEE_MESERO` para el turno
    (usar el empleado autenticado real es un refinamiento de Fase 7).
-7. **Backup cifrado**: copiar el módulo de pos-inteligente tal cual (ADR-1).
+7. ✅ **Backup cifrado** — `encryptedBackup.ts` (AES-256-GCM+PBKDF2) copiado
+   TAL CUAL de pos-inteligente (ADR-1), solo cambia el magic header
+   ("RES1" en vez de "POS1", para no confundir backups de ambos productos).
+   Lo que cifra es nuevo: `GET /backup/export` en el hub arma un snapshot
+   JSON genérico de 30 tablas de negocio (excluye `hub_events`/`hub_commands`,
+   protocolo LAN, no datos). `BackupPanel.tsx` exporta y descarga
+   `.restaurantosbackup`; restaurar DESCIFRA y previsualiza el contenido pero
+   NO reescribe el hub en vivo todavía (reimportar de forma transaccional y
+   segura es más grande, diferido a Fase 7).
 8. **Asistente IA v1**: conectar `OllamaAIClient` de pos-inteligente contra
    las vistas nuevas de 0016 (`v_dish_sales_margin`, `v_tips_by_shift`, etc.)
    con las tools que faltan por catalogar en un
@@ -323,15 +331,15 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   validado (protocolo + PWA estática, 2/2 tests). Pairing MVP. ⛔ empaquetado
   real (MSI/NSIS), updater y resource bundling de la PWA en producción
   pendientes (2026-07-03) — ver docs/spikes/spike-5-hub-rust.md.
-- 🟡 Fase 6 MVP — 6/9 puntos de §10 completos: (1) hub persistido en SQLite,
+- 🟡 Fase 6 MVP — 7/9 puntos de §10 completos: (1) hub persistido en SQLite,
   (2) Caja funcional (ver/dividir/cobrar), (3) descuento de inventario por
   receta como caso de uso real, (4) impresión ESC/POS en software (⛔ falta
   hardware), (5) turnos/propinas en UI, (6) RBAC/PIN (verificado en el hub,
-  no en el cliente). Mesero↔hub↔KDS↔Caja funcionando de punta a punta contra
-  el binario real (comanda→bump→cobro→turno cerrado con propina repartida,
-  verificado con scripts WS+HTTP en vivo, no solo tests).
-  Falta: (7) backup cifrado, (8) asistente IA v1, (9) pairing
-  real (2026-07-04).
+  no en el cliente), (7) backup cifrado (exporta real, restaura con preview
+  sin reescribir el hub aún). Mesero↔hub↔KDS↔Caja funcionando de punta a
+  punta contra el binario real (comanda→bump→cobro→turno cerrado con propina
+  repartida, verificado con scripts WS+HTTP en vivo, no solo tests).
+  Falta: (8) asistente IA v1, (9) pairing real (2026-07-04).
 - ⬜ Fases 7–8 — sin empezar, ver §9.
 
 ## Bitácora
@@ -625,3 +633,29 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     turno" (distinta del PIN de quien opera la caja), diferido a Fase 7.
   - Próximo: puntos 7 (backup cifrado), 8 (asistente IA v1), 9 (pairing
     real) de §10, luego Fases 7–8.
+- 2026-07-04: Fase 6 punto 7 (backup cifrado) completado en modo autónomo total.
+  - `encryptedBackup.ts` (AES-256-GCM + PBKDF2, Web Crypto) copiado TAL CUAL
+    de pos-inteligente (ADR-1 §2.1) — el algoritmo no se tocó. Solo cambió el
+    magic header del archivo (`"RES1"` en vez de `"POS1"`) para no confundir
+    backups de ambos productos, y el texto de los mensajes de error.
+  - Lo nuevo: `app/src-tauri/src/backup.rs` arma un snapshot JSON genérico
+    (`dump_table` lee `PRAGMA table_info` y convierte cada fila con
+    `row.get_ref` según el tipo SQLite real — no hay que mantener una lista
+    de columnas a mano por tabla) de 30 tablas de negocio, expuesto en
+    `GET /backup/export`. Deliberadamente NO incluye `hub_events`/
+    `hub_commands` (protocolo LAN) ni `schema_migrations` (se reconstruye).
+  - `BackupPanel.tsx` (nuevo, dentro de `CajaScreen`, permiso `backup.manage`
+    agregado al rol Cajero en el seed): exporta y descarga
+    `.restaurantosbackup` real; restaurar descifra y muestra un resumen de
+    conteos por tabla, pero **no reescribe el hub en vivo todavía** —
+    reimportar de forma transaccional y segura sobre un hub operando es una
+    pieza más grande (¿qué pasa con comandas abiertas durante la
+    restauración? ¿se valida contra el schema actual?) que se difiere a
+    Fase 7, documentado explícitamente en el componente y aquí.
+  - Verificado: `cargo test` 6/6 (nuevo
+    `snapshot_de_respaldo_incluye_catalogo_y_mesas_sembradas`), `npm test`
+    23/23, typecheck/build limpios, y `curl /backup/export` contra el
+    binario real devuelve 30 tablas con los datos sembrados reales
+    (7 productos, 5 mesas, 3 empleados).
+  - Próximo: puntos 8 (asistente IA v1), 9 (pairing real) de §10, luego
+    Fases 7–8.

@@ -96,3 +96,9 @@ export async function fetchTipsSummary(baseUrl = DEFAULT_BASE): Promise<TipDistr
   const res = await fetch(`${baseUrl}/tips/summary`);
   return res.json();
 }
+
+/** Snapshot JSON de respaldo (Fase 6 §10.7) — se cifra en el navegador con encryptedBackup.ts. */
+export async function fetchBackupSnapshot(baseUrl = DEFAULT_BASE): Promise<unknown> {
+  const res = await fetch(`${baseUrl}/backup/export`);
+  return res.json();
+}

@@ -61,7 +61,7 @@ pub fn seed(conn: &Connection, now: i64) {
     for (role_id, name, permissions) in [
         (ROLE_MESERO, "Mesero", r#"["order.create","order.view_own"]"#),
         (ROLE_COCINA, "Cocina", r#"["kitchen.bump","kitchen.view"]"#),
-        (ROLE_CAJERO, "Cajero", r#"["cash.checkout","cash.open_shift","cash.close_shift","order.view_all"]"#),
+        (ROLE_CAJERO, "Cajero", r#"["cash.checkout","cash.open_shift","cash.close_shift","order.view_all","backup.manage"]"#),
     ] {
         conn.execute(
             "INSERT OR IGNORE INTO roles (id,tenant_id,name,permissions_json,is_system,created_at,updated_at,origin_node) VALUES (?1,?2,?3,?4,1,?5,?5,?6)",
