@@ -3,6 +3,18 @@
 //! `GET /tables` reales (Fase 6 §10.1), no tenga que cambiar ni un id. Es el
 //! mismo menú/mesas que ya se veía en el prototipo, ahora respaldado por SQLite.
 use rusqlite::{params, Connection};
+use sha2::{Digest, Sha256};
+
+/// Mismo esquema de hash que pos-inteligente (`app/src/app/usecases/pin.ts`:
+/// `sha256("pos:pin:" + pin)`), namespaced para este sistema. Verificado del
+/// lado del hub (`POST /auth/pin`), no en el cliente — a diferencia de
+/// pos-inteligente (un solo dispositivo), aquí cualquier terminal debe poder
+/// autenticar a cualquier empleado contra el hub.
+pub fn hash_pin(pin: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("restaurantos:pin:{pin}").as_bytes());
+    format!("{:x}", hasher.finalize())
+}
 
 pub const TENANT: &str = "t1";
 pub const LOCATION: &str = "l1";
@@ -44,20 +56,28 @@ pub fn seed(conn: &Connection, now: i64) {
         params![REGISTER, LOCATION, now, NODE],
     ).unwrap();
 
-    for (role_id, name) in [(ROLE_MESERO, "Mesero"), (ROLE_COCINA, "Cocina"), (ROLE_CAJERO, "Cajero")] {
-        conn.execute(
-            "INSERT OR IGNORE INTO roles (id,tenant_id,name,permissions_json,is_system,created_at,updated_at,origin_node) VALUES (?1,?2,?3,'[]',1,?4,?4,?5)",
-            params![role_id, TENANT, name, now, NODE],
-        ).unwrap();
-    }
-    for (emp_id, role_id, name) in [
-        (EMPLOYEE_MESERO, ROLE_MESERO, "Ana (mesera)"),
-        (EMPLOYEE_COCINA, ROLE_COCINA, "Beto (cocina)"),
-        (EMPLOYEE_CAJERO, ROLE_CAJERO, "Carla (caja)"),
+    // Capacidades por rol (docs/permisos-plugins.md) — el LLM y las pantallas
+    // consultan esto, no hardcodean el nombre del rol.
+    for (role_id, name, permissions) in [
+        (ROLE_MESERO, "Mesero", r#"["order.create","order.view_own"]"#),
+        (ROLE_COCINA, "Cocina", r#"["kitchen.bump","kitchen.view"]"#),
+        (ROLE_CAJERO, "Cajero", r#"["cash.checkout","cash.open_shift","cash.close_shift","order.view_all"]"#),
     ] {
         conn.execute(
-            "INSERT OR IGNORE INTO employees (id,tenant_id,role_id,name,created_at,updated_at,origin_node) VALUES (?1,?2,?3,?4,?5,?5,?6)",
-            params![emp_id, TENANT, role_id, name, now, NODE],
+            "INSERT OR IGNORE INTO roles (id,tenant_id,name,permissions_json,is_system,created_at,updated_at,origin_node) VALUES (?1,?2,?3,?4,1,?5,?5,?6)",
+            params![role_id, TENANT, name, permissions, now, NODE],
+        ).unwrap();
+    }
+    // PINs demo (documentados aquí, NO son un mecanismo de seguridad real
+    // para producción — ver docs/spikes/spike-6-rbac-pin.md).
+    for (emp_id, role_id, name, pin) in [
+        (EMPLOYEE_MESERO, ROLE_MESERO, "Ana (mesera)", "1111"),
+        (EMPLOYEE_COCINA, ROLE_COCINA, "Beto (cocina)", "2222"),
+        (EMPLOYEE_CAJERO, ROLE_CAJERO, "Carla (caja)", "3333"),
+    ] {
+        conn.execute(
+            "INSERT OR IGNORE INTO employees (id,tenant_id,role_id,name,pin_hash,created_at,updated_at,origin_node) VALUES (?1,?2,?3,?4,?5,?6,?6,?7)",
+            params![emp_id, TENANT, role_id, name, hash_pin(pin), now, NODE],
         ).unwrap();
     }
 

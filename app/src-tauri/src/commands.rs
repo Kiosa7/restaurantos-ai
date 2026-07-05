@@ -563,6 +563,39 @@ pub fn close_shift(conn: &Connection, shift_id: &str) -> Result<Value> {
     Ok(json!({ "shiftId": shift_id, "employeeId": employee_id, "totalTipsCents": total_tips }))
 }
 
+// ---------------------------------------------------------------------------
+// RBAC / PIN (Fase 6 §10.6)
+// ---------------------------------------------------------------------------
+
+/// Verifica un PIN contra TODOS los empleados (no contra uno solo): a
+/// diferencia de pos-inteligente (un dispositivo, un PIN), aquí cualquier
+/// terminal debe poder identificar a cualquier empleado por su PIN — el PIN
+/// es la credencial, no el dispositivo.
+pub fn pin_login(conn: &Connection, pin: &str) -> Result<Value> {
+    let hash = crate::seed::hash_pin(pin);
+    let row: Option<(String, String, String, String, String)> = conn
+        .query_row(
+            "SELECT e.id, e.name, e.role_id, r.name, r.permissions_json
+             FROM employees e JOIN roles r ON r.id = e.role_id
+             WHERE e.pin_hash = ?1 AND e.status = 'active'",
+            params![hash],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .optional()
+        .map_err(|e| err(e.to_string()))?;
+
+    match row {
+        Some((employee_id, name, role_id, role_name, permissions_json)) => Ok(json!({
+            "employeeId": employee_id,
+            "nombre": name,
+            "roleId": role_id,
+            "roleNombre": role_name,
+            "permisos": serde_json::from_str::<Value>(&permissions_json).unwrap_or(json!([])),
+        })),
+        None => Err(err("PIN incorrecto")),
+    }
+}
+
 pub fn tips_summary_json(conn: &Connection) -> Value {
     let mut stmt = conn
         .prepare("SELECT shift_id, employee_id, amount FROM shift_tip_distributions ORDER BY created_at DESC")

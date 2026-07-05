@@ -254,12 +254,19 @@ salvo donde se anota dependencia):
    `CajaScreen.tsx` vía `POST /shifts/open|close`; propina capturada en el
    cobro se reparte al cerrar turno (modo `individual`, `close_shift` en
    `commands.rs`).
-6. **RBAC/PIN**: copiar el módulo de pos-inteligente (`PinModal.tsx` que se
-   quitó del scaffold inicial por no usarse aún, más la lógica de
-   `employees`/`roles` ya en 0002) y aplicar permisos por pantalla/dispositivo
-   (docs/permisos-plugins.md). Nota: `CajaScreen` hoy hardcodea
-   `EMPLOYEE_MESERO` para el turno — esto es lo que RBAC debe reemplazar por
-   selección real de empleado/PIN.
+6. ✅ **RBAC/PIN** — adaptado (no copiado literal) de pos-inteligente: el hash
+   SHA-256 del PIN se reutiliza (`hash_pin` en `seed.rs`, mismo esquema que
+   `app/src/app/usecases/pin.ts`), pero la VERIFICACIÓN se movió al hub
+   (`POST /auth/pin` en `commands.rs`/`hub.rs`) en vez del cliente — decisión
+   correcta para multi-terminal: cualquier tablet debe poder identificar a
+   cualquier empleado, no solo "el dispositivo del dueño" (patrón de
+   pos-inteligente, un solo dispositivo). `PinGate.tsx` (nuevo, reutiliza
+   `NumPad`) bloquea cada ruta hasta un PIN con el permiso requerido
+   (`docs/permisos-plugins.md`): `order.create` en mesero, `kitchen.bump` en
+   KDS, `cash.checkout` en Caja. PINs demo: 1111/2222/3333 (mesero/cocina/
+   cajero) — NO son un mecanismo de seguridad real para producción.
+   Pendiente: `CajaScreen` sigue hardcodeando `EMPLOYEE_MESERO` para el turno
+   (usar el empleado autenticado real es un refinamiento de Fase 7).
 7. **Backup cifrado**: copiar el módulo de pos-inteligente tal cual (ADR-1).
 8. **Asistente IA v1**: conectar `OllamaAIClient` de pos-inteligente contra
    las vistas nuevas de 0016 (`v_dish_sales_margin`, `v_tips_by_shift`, etc.)
@@ -316,13 +323,14 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   validado (protocolo + PWA estática, 2/2 tests). Pairing MVP. ⛔ empaquetado
   real (MSI/NSIS), updater y resource bundling de la PWA en producción
   pendientes (2026-07-03) — ver docs/spikes/spike-5-hub-rust.md.
-- 🟡 Fase 6 MVP — 5/9 puntos de §10 completos: (1) hub persistido en SQLite,
+- 🟡 Fase 6 MVP — 6/9 puntos de §10 completos: (1) hub persistido en SQLite,
   (2) Caja funcional (ver/dividir/cobrar), (3) descuento de inventario por
   receta como caso de uso real, (4) impresión ESC/POS en software (⛔ falta
-  hardware), (5) turnos/propinas en UI. Mesero↔hub↔KDS↔Caja funcionando de
-  punta a punta contra el binario real (comanda→bump→cobro→turno cerrado con
-  propina repartida, verificado con scripts WS+HTTP en vivo, no solo tests).
-  Falta: (6) RBAC/PIN, (7) backup cifrado, (8) asistente IA v1, (9) pairing
+  hardware), (5) turnos/propinas en UI, (6) RBAC/PIN (verificado en el hub,
+  no en el cliente). Mesero↔hub↔KDS↔Caja funcionando de punta a punta contra
+  el binario real (comanda→bump→cobro→turno cerrado con propina repartida,
+  verificado con scripts WS+HTTP en vivo, no solo tests).
+  Falta: (7) backup cifrado, (8) asistente IA v1, (9) pairing
   real (2026-07-04).
 - ⬜ Fases 7–8 — sin empezar, ver §9.
 
@@ -587,3 +595,33 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
     con tarjeta no. 23/23 tests totales, typecheck y build limpios.
   - ⛔ Sigue sin validar con impresora térmica 80mm real — sin cambio desde
     Fase 2 (spike 2), sigue pendiente que el dueño consiga el hardware.
+- 2026-07-04: Fase 6 punto 6 (RBAC/PIN) completado en modo autónomo total.
+  - DECISIÓN AUTÓNOMA: NO se copió `AuthContext.tsx`/`PinModal.tsx` de
+    pos-inteligente literal — ese patrón asume UN dispositivo con UN PIN de
+    dueño (verificado en el cliente contra `localStorage`). En un sistema
+    multi-terminal cualquier tablet debe poder identificar a CUALQUIER
+    empleado, así que la verificación se movió al hub: `POST /auth/pin`
+    (`commands.rs::pin_login`) busca entre todos los `employees` el que
+    coincide con el hash. Lo que SÍ se reutilizó tal cual: el esquema de hash
+    SHA-256 (`sha256("...:pin:" + pin)`, mismo principio que
+    `app/src/app/usecases/pin.ts`).
+  - `PinGate.tsx` (nuevo componente, reutiliza `NumPad` del Design System):
+    bloquea una pantalla completa hasta un PIN válido CON el permiso
+    requerido; expone el empleado autenticado a sus hijos. Permisos reales
+    por rol sembrados en `roles.permissions_json` (antes vacíos):
+    `order.create`/`order.view_own` (mesero), `kitchen.bump`/`kitchen.view`
+    (cocina), `cash.checkout`/`cash.open_shift`/`cash.close_shift`/
+    `order.view_all` (cajero) — docs/permisos-plugins.md.
+  - `App.tsx` ahora exige PIN por ruta: mesero→`order.create`,
+    KDS→`kitchen.bump`, Caja→`cash.checkout`. PINs demo sembrados:
+    1111/2222/3333 — documentados como NO aptos para producción.
+  - Verificado: `cargo test` 5/5 (nuevo `login_por_pin_identifica_al_
+    empleado_y_sus_permisos`), `npm test` 23/23, typecheck/build limpios en
+    ambos, y `curl /auth/pin` contra el binario real confirma PIN correcto
+    (devuelve empleado+permisos) y PIN incorrecto (401).
+  - Pendiente (no bloquea): `CajaScreen` sigue usando el `EMPLOYEE_MESERO`
+    hardcodeado para abrir turno en vez del empleado autenticado — requiere
+    una segunda pantalla de PIN específica para "quién es el mesero de este
+    turno" (distinta del PIN de quien opera la caja), diferido a Fase 7.
+  - Próximo: puntos 7 (backup cifrado), 8 (asistente IA v1), 9 (pairing
+    real) de §10, luego Fases 7–8.

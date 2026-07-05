@@ -236,3 +236,20 @@ fn turno_y_propina_se_reparten_al_cerrar() {
     let dist = summary.as_array().unwrap().iter().find(|d| d["shiftId"] == shift_id).unwrap();
     assert_eq!(dist["amountCents"], 2000, "modo individual: el mesero se queda el 100% de su propina");
 }
+
+/// Fase 6 §10.6: RBAC/PIN — el hub identifica al empleado por su PIN
+/// (cualquier terminal, no un dispositivo fijo) y expone sus permisos.
+#[test]
+fn login_por_pin_identifica_al_empleado_y_sus_permisos() {
+    use app_lib::commands::pin_login;
+
+    let conn = fresh_seeded_db();
+
+    let ok = pin_login(&conn, "3333").expect("PIN de Carla (cajera) debe autenticar");
+    assert_eq!(ok["employeeId"], seed::EMPLOYEE_CAJERO);
+    assert_eq!(ok["roleNombre"], "Cajero");
+    assert!(ok["permisos"].as_array().unwrap().iter().any(|p| p == "cash.checkout"));
+
+    let bad = pin_login(&conn, "0000");
+    assert!(bad.is_err(), "un PIN que no existe debe rechazarse");
+}

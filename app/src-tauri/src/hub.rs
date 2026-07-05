@@ -137,6 +137,7 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
     let mut router = Router::new()
         .route("/health", get(health))
         .route("/pair", post(pair))
+        .route("/auth/pin", post(post_auth_pin))
         .route("/menu", get(get_menu))
         .route("/tables", get(get_tables))
         .route("/orders/open", get(get_open_orders))
@@ -161,6 +162,17 @@ async fn pair(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
     let role = body.get("role").and_then(|v| v.as_str()).unwrap_or("desconocido");
     let token = uuid::Uuid::new_v4().to_string();
     Json(serde_json::json!({ "token": token, "role": role, "issuedAt": now_ms() }))
+}
+
+async fn post_auth_pin(State(state): State<Arc<HubState>>, Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+    let Some(pin) = body.get("pin").and_then(|v| v.as_str()) else {
+        return domain_error_response("falta pin".into());
+    };
+    let conn = state.db.lock().unwrap();
+    match commands::pin_login(&conn, pin) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (axum::http::StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": e.0 }))).into_response(),
+    }
 }
 
 async fn get_menu(State(state): State<Arc<HubState>>) -> impl IntoResponse {
