@@ -163,6 +163,7 @@ pub fn router(state: Arc<HubState>, pwa_dir: Option<&str>) -> Router {
         .route("/reservations/:id/status", post(post_reservation_status))
         .route("/delivery-orders", get(get_delivery_orders).post(post_delivery_order))
         .route("/delivery-orders/:id/status", post(post_delivery_order_status))
+        .route("/reports/dashboard", get(get_reports_dashboard))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
@@ -200,6 +201,11 @@ async fn post_cfdi_global(State(state): State<Arc<HubState>>, Json(payload): Jso
 async fn get_uninvoiced_sales(State(state): State<Arc<HubState>>) -> impl IntoResponse {
     let conn = state.db.lock().unwrap();
     Json(commands::list_uninvoiced_sales(&conn))
+}
+
+async fn get_reports_dashboard(State(state): State<Arc<HubState>>) -> impl IntoResponse {
+    let conn = state.db.lock().unwrap();
+    Json(crate::reports::dashboard(&conn))
 }
 
 async fn get_customers(State(state): State<Arc<HubState>>) -> impl IntoResponse {

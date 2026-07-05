@@ -208,8 +208,8 @@ marketplace · Auditoría avanzada · Franquicias · API pública · Visión ava
 | **4 Base de datos** ✅ | Migraciones nuevas: menú/modificadores, mesas, comandas/tiempos, recetas/insumos, turnos/propinas, tablas CFDI | Esquema validado con datos reales (node:sqlite, servicio completo simulado) |
 | **5 Infraestructura** 🟡 | Hub server (HTTP+WS) ✅, pairing real ✅ (genera/persiste, enforcement ⛔), servido de PWA ✅ — updater y empaquetado ⛔ | "Instalación limpia en PC virgen < 30 min" SIN validar (falta `tauri build`, decisión de posponerlo ya tomada) |
 | **6 MVP** ✅ | Los 9 puntos de §10 abordados: comandas/inventario/caja/turnos/impresión(sw)/RBAC/backup/IA/pairing, todo verificado contra el binario real | **Un restaurante piloto opera un servicio de viernes completo sin tocar papel** — el software ya lo soporta; falta el piloto real (⛔ §11.4) para decir que se cumplió en la práctica |
-| **7 Comercial** 🟡 ⬅️ SIGUIENTE | CFDI (generación ✅, timbrado ⛔), factura global ✅ (complemento de pago ⛔ transitivo de timbrado), clientes ✅, fidelización ✅, promociones ✅, compras+proveedores+OCR ✅, reservaciones ✅, delivery/para llevar ✅ — solo faltan reportes avanzados | Primer cliente de pago facturando — lejos, falta timbrado real; el resto de módulos de negocio ya opera contra el binario real |
-| **8 Enterprise** ⬜ | Multi-sucursal, plugins, API pública | Cadena 3+ sucursales sincronizando |
+| **7 Comercial** ✅ (salvo timbrado ⛔) | CFDI (generación ✅, timbrado ⛔), factura global ✅ (complemento de pago ⛔ transitivo de timbrado), clientes ✅, fidelización ✅, promociones ✅, compras+proveedores+OCR ✅, reservaciones ✅, delivery/para llevar ✅, reportes avanzados ✅ | Primer cliente de pago facturando — lejos, falta timbrado real; todo el resto de Fase 7 ya opera contra el binario real |
+| **8 Enterprise** ⬜ ⬅️ SIGUIENTE | Multi-sucursal, plugins, API pública | Cadena 3+ sucursales sincronizando |
 
 Entregables documentales de la Fase 2 (crear en `docs/`): visión de producto ·
 arquitectura general/software/datos/sync/IA/seguridad · modelo de dominio · modelo
@@ -384,15 +384,24 @@ verificado contra el binario (`cargo test` + flujo WS+HTTP en vivo).
    dividida queda documentado como limitación conocida, no bloqueante.
    Verificado contra el binario real con matemática exacta ($140 bruto →
    $119 con 15% de descuento, 11 puntos ganados) (2026-07-04).
-9. **Reportes avanzados** — PENDIENTE. Hay 6 vistas de reporte (0016) ya
-   explotadas por el asistente de IA (§10 punto 8); "avanzados" implica UI
-   de reportes dedicada (gráficas, exportar), no vistas nuevas.
+9. ✅ **Reportes avanzados** — `reports.rs::dashboard` agrega ventas por
+   día (serie de tiempo nueva sobre `sales`, sin vista dedicada porque las
+   6 vistas de 0016 son operativas, no de series de tiempo) + 3 de esas
+   vistas (`v_dish_sales_margin`, `v_table_turnover`, `v_tips_by_shift`) en
+   un solo payload. `GET /reports/dashboard`. `ReportesPanel.tsx` en
+   `CajaScreen`: gráfica de barras (SVG propio, sin librería nueva) para
+   ventas por día + tablas para las otras 3 métricas, cada una con botón
+   de exportar CSV (client-side, sin endpoint nuevo). No se tocaron las
+   vistas mismas: siguen siendo las mismas que ya explota el asistente de
+   IA (§10 punto 8), esto es la versión "para mirar", no un modelo nuevo.
+   Verificado contra el binario real, incluida una revisión visual con
+   Playwright (2026-07-05).
 
 **Ninguno de estos bloquea empezar el siguiente**: son módulos
 independientes entre sí salvo (1)→(2) (timbrado antes que factura global).
-Con (2)-(8) cerrados (complemento de pago ⛔ transitivamente bloqueado por
-(1), no rehecho), solo queda (9) reportes avanzados para cerrar Fase 7
-además del timbrado bloqueado.
+Con (2)-(9) cerrados (complemento de pago ⛔ transitivamente bloqueado por
+(1)), **Fase 7 queda cerrada salvo el timbrado real** (⛔, bloqueado desde
+Fase 2 por falta de cuenta de PAC).
 
 ## 10.2 Fase 8 (Enterprise) — sin empezar
 
@@ -458,14 +467,21 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   (código + verificación real); lo que falta son 2 piezas que dependen de
   algo fuera del código (hardware físico) o de una decisión de ruptura
   deliberada (enforcement de pairing) — ver §10 y bitácora 2026-07-04.
-- 🟡 Fase 7 Comercial — AVANZADA: generación de CFDI 4.0 real (`POST
-  /cfdi/generate`), factura global, clientes, fidelización, promociones,
-  compras+proveedores+OCR, reservaciones y delivery/para llevar — los 8
-  módulos completos y verificados contra el binario real. ⛔ Timbrado real
-  bloqueado (spike 3, sin cuenta de PAC); complemento de pago bloqueado
-  transitivamente (necesita el UUID fiscal que solo da un timbrado real).
-  Falta solo reportes avanzados para cerrar Fase 7 — ver §10.1 (2026-07-05).
-- ⬜ Fase 8 Enterprise — sin empezar, ver §9 y §10.2.
+- ✅ Fase 7 Comercial (salvo timbrado ⛔) — CERRADA: generación de CFDI 4.0
+  real, factura global, clientes, fidelización, promociones, compras+
+  proveedores+OCR, reservaciones, delivery/para llevar y reportes
+  avanzados — los 9 módulos completos y verificados contra el binario
+  real (incluida revisión visual con Playwright para el módulo de
+  reportes). ⛔ Timbrado real bloqueado (spike 3, sin cuenta de PAC);
+  complemento de pago bloqueado transitivamente (necesita el UUID fiscal
+  que solo da un timbrado real) — ninguno de los dos es un hueco de
+  diseño, son dependencias externas documentadas. Fase 7 no tiene más
+  trabajo pendiente que no dependa de esos dos bloqueos (2026-07-05).
+- 🟡 Fase 8 Enterprise — ARRANCANDO: sin código todavía en esta sesión, ver
+  §9 y §10.2 para el alcance (multi-sucursal reusando el protocolo
+  HLC/outbox ya validado en pos-inteligente, plugins/marketplace sobre
+  `docs/permisos-plugins.md`, auditoría avanzada, franquicias, API
+  pública, visión avanzada).
 
 ## Bitácora
 
@@ -1043,3 +1059,46 @@ Defaults razonables ya asumidos; confirmar en cuanto haya oportunidad:
   - **Con esto, de los 9 puntos de §10.1 solo queda pendiente el (9)
     reportes avanzados** para cerrar Fase 7 por completo (además del
     timbrado real, bloqueado sin cambio desde Fase 2).
+- 2026-07-05: Fase 7 — reportes avanzados. **CIERRE DE FASE 7** (salvo
+  timbrado real, ⛔).
+  - **`reports.rs::dashboard`**: agrega ventas por día de los últimos 30
+    días (agregación nueva sobre `sales`, agrupando por
+    `strftime('%Y-%m-%d', datetime/1000, 'unixepoch')` — no hay vista para
+    esto en 0016 porque sus 6 vistas son operativas —mesas, cocina,
+    turnos—, no series de tiempo) junto con 3 de esas vistas ya existentes
+    (`v_dish_sales_margin`, `v_table_turnover`, `v_tips_by_shift`) en un
+    solo payload. `GET /reports/dashboard`.
+  - **`ReportesPanel.tsx`**: gráfica de barras SVG propia (sin librería
+    nueva — el proyecto no tenía ninguna de gráficas) para ventas por día,
+    y tablas para margen por platillo / rotación de mesas / propinas por
+    turno, cada bloque con botón "Exportar CSV" (generado en el cliente
+    con `Blob`, sin endpoint nuevo). DECISIÓN AUTÓNOMA: se usó el skill de
+    dataviz del proyecto para la gráfica — barra con tope de 24px (nunca
+    llena el carril aunque haya pocos días de datos), extremo redondeado,
+    línea base, etiqueta de día, tooltip nativo con el valor exacto; las
+    otras 3 métricas se muestran como tabla (no gráfica) porque son datos
+    multi-campo por fila, donde una tabla es más legible que forzar un
+    tipo de gráfica.
+  - Revisión visual real con Playwright (no solo capturas de otra sesión):
+    se detectó y corrigió un bug real que el typecheck/tests no habrían
+    visto — con pocos días de datos (1, en el seed de prueba) la barra sin
+    tope de ancho llenaba TODO el ancho de la gráfica y parecía un bloque
+    sólido roto, no una barra. Corregido capando el ancho a 24px y
+    centrando cada barra en su carril; se agregó la etiqueta de día en el
+    eje X, que tampoco existía. Confirmado visualmente tras el fix.
+  - Verificado: `cargo test` 14/14 (nuevo
+    `dashboard_de_reportes_agrega_ventas_y_vistas_existentes`), `npm test`
+    23/23, typecheck/build limpios. Contra el binario real (script Node,
+    10 aserciones vía `fetch`): el dashboard trae los 4 arreglos
+    esperados, incluye datos sembrados del menú en margen por platillo, y
+    una venta nueva se refleja correctamente en `ventasPorDia`.
+  - **Con esto, Fase 7 (Comercial) queda cerrada.** Los 9 puntos de §10.1
+    están abordados: 8 con código + verificación real completa, y el
+    noveno (timbrado real) sigue ⛔ documentado desde Fase 2 sin cambio —
+    no es una omisión de esta sesión, es la única pieza que depende de un
+    recurso externo (cuenta de PAC) que el proyecto no controla.
+  - **Próximo paso**: Fase 8 (Enterprise) — §9 y §10.2 tienen el
+    recordatorio de alcance (multi-sucursal con el protocolo HLC/outbox ya
+    validado en pos-inteligente, plugins/marketplace sobre
+    `docs/permisos-plugins.md`, auditoría avanzada, franquicias, API
+    pública, visión avanzada).

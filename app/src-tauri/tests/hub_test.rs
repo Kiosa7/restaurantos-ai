@@ -393,6 +393,41 @@ fn factura_global_agrupa_varias_ventas_sin_duplicar() {
     assert!(generate_global_invoice(&conn, &mixed).is_err(), "una venta inexistente debe rechazarse");
 }
 
+/// Fase 7: reportes avanzados — el dashboard agrega ventas por día (serie
+/// de tiempo nueva, sin vista dedicada) y las vistas ya existentes de 0016
+/// (margen por platillo, rotación de mesas, propinas por turno) en un solo
+/// payload para una pantalla de reportes real, no solo para el asistente IA.
+#[test]
+fn dashboard_de_reportes_agrega_ventas_y_vistas_existentes() {
+    use app_lib::commands::*;
+    use app_lib::reports::dashboard;
+
+    let conn = fresh_seeded_db();
+
+    let payload: NuevaComandaPayload = serde_json::from_value(json!({
+        "tableNumber": 5,
+        "items": [{ "productId": "mi_tacos_pastor", "cantidad": 2 }]
+    })).unwrap();
+    let order = handle_nueva_comanda(&conn, &payload).unwrap();
+    let checkout_payload: CheckoutPayload = serde_json::from_value(json!({
+        "orderId": order["orderId"], "paymentMethod": "efectivo"
+    })).unwrap();
+    handle_checkout(&conn, &checkout_payload).unwrap();
+
+    let doc = dashboard(&conn);
+    let ventas_por_dia = doc["ventasPorDia"].as_array().unwrap();
+    assert_eq!(ventas_por_dia.len(), 1, "toda la venta de la prueba cae en un solo día");
+    assert_eq!(ventas_por_dia[0]["numVentas"], 1);
+    assert_eq!(ventas_por_dia[0]["totalCents"], 9000 * 2);
+
+    assert!(doc["margenPorPlatillo"].as_array().unwrap().iter().any(|m| m["producto"] == "Tacos al pastor"), "margen por platillo incluye el producto vendido");
+    // Rotación de mesas y propinas por turno no dependen de esta venta puntual
+    // (necesitan orders cerradas / shifts); solo se valida que la clave existe
+    // y es un arreglo, igual patrón que usa el asistente de IA para estas vistas.
+    assert!(doc["rotacionMesas"].is_array());
+    assert!(doc["propinasPorTurno"].is_array());
+}
+
 /// Fase 7: cliente real, promoción activa y redención de puntos aplicados
 /// en un cobro real (no solo el cálculo aislado).
 #[test]

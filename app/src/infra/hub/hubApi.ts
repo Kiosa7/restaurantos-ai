@@ -336,3 +336,46 @@ export function generateGlobalInvoice(
 ): Promise<GlobalInvoiceResponse> {
   return postJson(baseUrl, "/cfdi/global", body);
 }
+
+// ---------------------------------------------------------------------------
+// Fase 7: reportes avanzados
+// ---------------------------------------------------------------------------
+
+export interface VentaPorDia {
+  dia: string;
+  numVentas: number;
+  totalCents: number;
+}
+
+export interface MargenPlatillo {
+  producto: string;
+  precioVentaCents: number;
+  costoRecetaCents: number;
+  margenCents: number;
+}
+
+export interface RotacionMesa {
+  mesa: number;
+  comandasCerradas: number;
+  minutosPromedioOcupacion: number;
+}
+
+export interface PropinaPorTurno {
+  shiftId: string;
+  employeeId: string;
+  startedAt: number;
+  numPropinas: number;
+  totalPropinasCents: number;
+}
+
+export interface ReportsDashboard {
+  ventasPorDia: VentaPorDia[];
+  margenPorPlatillo: MargenPlatillo[];
+  rotacionMesas: RotacionMesa[];
+  propinasPorTurno: PropinaPorTurno[];
+}
+
+export async function fetchReportsDashboard(baseUrl = DEFAULT_BASE): Promise<ReportsDashboard> {
+  const res = await fetch(`${baseUrl}/reports/dashboard`);
+  return res.json();
+}

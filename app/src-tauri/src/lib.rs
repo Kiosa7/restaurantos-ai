@@ -4,6 +4,7 @@ pub mod commands;
 pub mod commerce;
 pub mod db;
 pub mod hub;
+pub mod reports;
 pub mod seed;
 
 use std::path::PathBuf;
